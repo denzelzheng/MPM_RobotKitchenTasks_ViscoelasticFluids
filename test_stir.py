@@ -21,7 +21,7 @@ def test_sim():
 
     cut_folder = './data/cut/cut0001/'
 
-    nhk = NeoHookean(0, 0)
+    nhk = NeoHookean(1e5, 0)
     dumpling_mesh = trimesh.load_mesh(pjoin(cut_folder, 'dumpling1.obj'))
     dumpling_points = dumpling_mesh.sample(8192)
     dumpling_points += np.array([0, -0.1, 0])
