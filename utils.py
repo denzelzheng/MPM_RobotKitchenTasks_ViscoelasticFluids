@@ -16,6 +16,28 @@ mats = ti.Matrix.field
 scalars = ti.field
 
 
+def rotate_mesh(vertices, axis, angle_degrees):
+    angle_radians = np.radians(angle_degrees)
+    
+    if axis == 'x':
+        rotation_matrix = np.array([[1, 0, 0],
+                                    [0, np.cos(angle_radians), -np.sin(angle_radians)],
+                                    [0, np.sin(angle_radians), np.cos(angle_radians)]])
+    elif axis == 'y':
+        rotation_matrix = np.array([[np.cos(angle_radians), 0, np.sin(angle_radians)],
+                                    [0, 1, 0],
+                                    [-np.sin(angle_radians), 0, np.cos(angle_radians)]])
+    elif axis == 'z':
+        rotation_matrix = np.array([[np.cos(angle_radians), -np.sin(angle_radians), 0],
+                                    [np.sin(angle_radians), np.cos(angle_radians), 0],
+                                    [0, 0, 1]])
+    else:
+        raise ValueError("axis must be 'x', 'y', or 'z'")
+    
+    return np.dot(vertices, rotation_matrix.T)
+
+
+
 def trimesh_show(geoms):
     scene = trimesh.Scene()
     for g in geoms:

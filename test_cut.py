@@ -27,6 +27,7 @@ def test_sim():
     dumpling_points = dumpling_mesh.sample(8192)
     dumpling_points += np.array([0, -0.1, 0])
     dumpling = SoftBody(dumpling_points, material)
+    # print(dumpling_points.mean(axis=0))
 
     chopping_board_mesh = trimesh.load_mesh(pjoin(cut_folder, 'chopping_board.obj'))
     chopping_board_mesh.vertices += np.array([0.5, 0.4, 0.5])

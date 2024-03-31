@@ -410,6 +410,7 @@ class MpmSim:
 
         # fileds
         self.x: Optional[vecs] = None
+        self.x_color: Optional[vecs] = None
         self.v: Optional[vecs] = None
         self.C: Optional[mats] = None
         self.F: Optional[mats] = None
@@ -458,8 +459,10 @@ class MpmSim:
                 self.lag_mesh.vertices) - self.origin)
             self.tris_lag.from_numpy(np.asarray(self.lag_mesh.faces))
 
+
         if self.n_soft_pars:    
             self.x = vecs(3, T, self.n_soft_pars)
+            self.x_color = vecs(3, T, self.n_soft_pars)
             self.v = vecs(3, T, self.n_soft_pars)
             self.C = mats(3, 3, T, self.n_soft_pars)
             self.F = mats(3, 3, T, self.n_soft_pars)
@@ -468,6 +471,9 @@ class MpmSim:
             np_x = np.concatenate(
                 [b.rest_pos for b in self.deformable_bodies], axis=0) 
             self.x.from_numpy(np_x - self.origin)
+
+            colors = np.random.rand(self.n_soft_pars, 3)
+            self.x_color.from_numpy(np.array(colors))
 
         self.grid_v = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
         self.grid_m = scalars(T, (self.n_grids, self.n_grids, self.n_grids))
@@ -594,15 +600,19 @@ class MpmSim:
         if self.x:
             self.scene.particles(self.x, color=(
                 0.68, 0.26, 0.19), radius=0.002)
+
+        if self.x:
+            self.scene.particles(self.x, per_vertex_color=self.x_color, radius=0.002)
+
         if self.x_rp:
             self.scene.particles(self.x_rp, color=(
                 0.19, 0.26, 0.68), radius=0.002)
         if self.n_static_bounds:
             for b in self.static_bounds:
-                self.scene.mesh(b.vertices, b.faces, color=(0.2, 0.7, 0.2))
+                self.scene.mesh(b.vertices, b.faces, color=(0.5, 0.5, 0.5))
         if self.n_dynamic_bounds:
             for b in self.dynamic_bounds:
-                self.scene.mesh(b.vertices, b.faces, color=(0.2, 0.2, 0.7))
+                self.scene.mesh(b.vertices, b.faces, color=(0.7, 0.7, 0.7))
         if self.n_lag_verts:
             self.scene.mesh(self.x_lag, self.tris_lag_expanded, color=(0.5, 0.1, 0.3))
 
