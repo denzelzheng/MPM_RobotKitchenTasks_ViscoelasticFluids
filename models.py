@@ -9,7 +9,7 @@ from typing import List, Dict
 import numpy as np
 import trimesh
 from os.path import join as pjoin
-from sim import RigidBody, MpmLagSim
+from sim import RigidBody
 import time 
 from utils import transform_pos
 from icecream import ic 

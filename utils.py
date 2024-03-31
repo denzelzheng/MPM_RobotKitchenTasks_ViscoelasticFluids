@@ -199,7 +199,7 @@ def sdf_from_mesh(mesh: trimesh.Trimesh,
     # if is list of Trimesh
     if isinstance(mesh, trimesh.Scene):
         meshes = mesh.dump()
-        mesh = meshes.sum()
+        mesh = trimesh.util.concatenate(meshes)
     else:
         meshes = [mesh]
     aabb = np.stack([mesh.vertices.min(axis=0), mesh.vertices.max(axis=0)])
@@ -222,3 +222,6 @@ def sdf_from_mesh(mesh: trimesh.Trimesh,
     T_mesh2vox[:3, 3] = (res - 1) / 2 - voxels_center * scale
 
     return SDF(voxels, T_mesh2vox)
+
+
+

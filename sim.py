@@ -43,7 +43,8 @@ class Boundary:
         self.sdf = sdf_from_mesh(mesh, sdf_res)
 
         if isinstance(mesh, trimesh.Scene):
-            mesh = mesh.dump().sum()
+            meshes = mesh.dump()
+            mesh = trimesh.util.concatenate(meshes)
 
         self.n_vertices = mesh.vertices.shape[0]
         self.n_faces = mesh.faces.shape[0]
@@ -321,13 +322,42 @@ class MpmSim:
         self.n_rigid_tris: int = 0
         self.n_rigid_pars: int = 0
 
+        self.n_lag_verts: int = 0
+        self.n_lag_tris: int = 0
+
         self.x_rp: Optional[vecs] = None
         self.v_rp: Optional[vecs] = None  # for the current naive coupling
         # not using the true-rigid-coupling for now
         # self.x_rt: Optional[vecs] = None
         # self.x_rp2t: Optional[vecs] = None
 
+        self.x_lag: Optional[vecs] = None
+        self.v_lag: Optional[vecs] = None
+        self.C_lag: Optional[mats] = None
+        self.restInvT_lag: Optional[mats] = None
+        self.energy_lag: Optional[scalars] = None
+        self.tris_lag: Optional[scalars] = None
+        self.nrm_lag: Optional[vecs] = None
+        self.tris_area_lag: Optional[scalars] = None
+        self.tris_lag_expanded: Optional[scalars] = None
+
     def init_system(self):
+
+        if self.n_lag_verts:
+            self.x_lag = vecs(3, T, self.n_lag_verts, needs_grad=True)
+            self.v_lag = vecs(3, T, self.n_lag_verts)
+            self.C_lag = mats(3, 3, T, self.n_lag_verts)
+            self.restInvT_lag = mats(2, 2, T, self.n_lag_tris)
+            self.energy_lag = scalars(T, shape=(), needs_grad=True)
+            self.tris_lag = scalars(int, (self.n_lag_tris, 3))
+            self.nrm_lag = vecs(3, T, self.n_lag_tris)
+            self.tris_area_lag = scalars(float, (self.n_lag_tris,))
+            self.tris_lag_expanded = scalars(int, self.n_lag_tris * 3)
+
+            self.x_lag.from_numpy(np.asarray(
+                self.lag_mesh.vertices) - self.origin)
+            self.tris_lag.from_numpy(np.asarray(self.lag_mesh.faces))
+
         if self.n_soft_pars:    
             self.x = vecs(3, T, self.n_soft_pars)
             self.v = vecs(3, T, self.n_soft_pars)
@@ -357,7 +387,50 @@ class MpmSim:
             np_rp_offsets = np.asarray(self.rigid_pars_offsets)
             self.rp_offsets.from_numpy(np_rp_offsets)
 
+        # for bi in range(self.n_soft_bends):
+        #     face_inds = self.bending_faces[bi]
+        #     n0 = self.compute_normal_lag(face_inds[0])
+        #     n1 = self.compute_normal_lag(face_inds[1])
+        #     theta = ti.acos(n0.dot(n1))
+        #     theta = ti.max(theta, ti.abs(self.eps))
+        #     edge_inds = self.bending_edges[bi]
+        #     edge = (self.x_lag[edge_inds[1]] -
+        #             self.x_lag[edge_inds[0]]).normalized()
+        #     sin_theta = n0.cross(n1).dot(edge)
+        #     if sin_theta < 0:
+        #         theta = - theta
+        #     self.rest_bending_lag[bi] = theta
+
         self.clear_fields()
+
+    @ti.func
+    def compute_T_lag(self, i):
+        a, b, c = self.tris_lag[i,
+            0], self.tris_lag[i, 1], self.tris_lag[i, 2]
+        xab = self.x_lag[b] - self.x_lag[a]
+        xac = self.x_lag[c] - self.x_lag[a]
+        return ti.Matrix([
+            [xab[0], xac[0]],
+            [xab[1], xac[1]],
+            [xab[2], xac[2]]
+        ])
+    
+    @ti.func
+    def compute_area_lag(self, i):
+        a, b, c = self.tris_lag[i,
+            0], self.tris_lag[i, 1], self.tris_lag[i, 2]
+        xab = self.x_lag[b] - self.x_lag[a]
+        xac = self.x_lag[c] - self.x_lag[a]
+        return 0.5 * xab.cross(xac).norm()
+    
+    @ti.func
+    def compute_normal_lag(self, i):
+        a, b, c = self.tris_lag[i,
+            0], self.tris_lag[i, 1], self.tris_lag[i, 2]
+        xab = self.x_lag[b] - self.x_lag[a]
+        xac = self.x_lag[c] - self.x_lag[a]
+        return xab.cross(xac).normalized()
+
 
     @ti.kernel
     def clear_fields(self):
@@ -366,6 +439,29 @@ class MpmSim:
                 self.v[i] = ti.Vector.zero(T, 3)
                 self.F[i] = ti.Vector.identity(T, 3)
                 self.C[i] = ti.Matrix.zero(float, 3, 3)
+        if ti.static(self.n_lag_verts):
+            for i in ti.ndrange(self.n_lag_verts):
+                self.v_lag[i] = ti.Vector([0, 0, 0], T)
+                self.C_lag[i] = ti.Matrix.zero(T, 3, 3)
+            for i in range(self.n_lag_tris):
+                ds = self.compute_T_lag(i)
+                ds0 = ti.Vector([ds[0, 0], ds[1, 0], ds[2, 0]])
+                ds1 = ti.Vector([ds[0, 1], ds[1, 1], ds[2, 1]])
+                ds0_norm = ds0.norm()
+                IB = ti.Matrix([
+                    [ds0_norm, ds0.dot(ds1) / ds0_norm],
+                    [0, ds0.cross(ds1).norm() / ds0_norm]
+                ]).inverse()
+                if ti.math.isnan(IB).sum():
+                    print('[nan detected during IB computation]')
+                    IB = ti.Matrix.zero(T, 2, 2)
+                self.restInvT_lag[i] = IB
+                self.tris_area_lag[i] = self.compute_area_lag(i)
+                self.nrm_lag[i] = self.compute_normal_lag(i)
+        for i, j in ti.ndrange(self.n_lag_tris, 3):
+            self.tris_lag_expanded[i * 3 + j] = self.tris_lag[i, j]
+
+
 
     def set_camera_pos(self, x, y, z):
         self.camera.position(x, y, z)
@@ -377,6 +473,10 @@ class MpmSim:
         # TODO
         # reference: taichi mpm128 https://github.com/taichi-dev/taichi/tree/master/python/taichi/examples/mpm128.py
         self.init_step()
+        if self.n_lag_verts:
+            self.energy_lag[None] = 0
+            with ti.ad.Tape(self.energy_lag):
+                self.compute_energy_lag()
         self.P2G()
         self.grid_op()
         self.G2P()
@@ -403,6 +503,8 @@ class MpmSim:
         if self.n_dynamic_bounds:
             for b in self.dynamic_bounds:
                 self.scene.mesh(b.vertices, b.faces, color=(0.2, 0.2, 0.7))
+        if self.n_lag_verts:
+            self.scene.mesh(self.x_lag, self.tris_lag_expanded, color=(0.5, 0.1, 0.3))
 
     def show(self):
         self.canvas.scene(self.scene)
@@ -440,21 +542,23 @@ class MpmSim:
                     self.grid_v[base + offset] += weight * \
                         (self.p_mass * self.v[p] + affine @ dpos)
                     self.grid_m[base + offset] += weight * self.p_mass
-        if ti.static(self.n_rigid_pars):
-            for p in self.x_rp:  # Particle state update and scatter to grid (P2G)
-                base = (self.x_rp[p] * self.inv_dx - 0.5).cast(int)
-                fx = self.x_rp[p] * self.inv_dx - base.cast(float)
-                # Quadratic kernels  [http://mpm.graphics   Eqn. 123, with x=fx, fx-1,fx-2]
+        if ti.static(self.n_lag_verts):
+            for p in self.x_lag:
+                base = ti.cast(self.x_lag[p] * self.inv_dx - 0.5, ti.i32)
+                fx = self.x_lag[p] * self.inv_dx - ti.cast(base, float)
                 w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1)
                     ** 2, 0.5 * (fx - 0.5) ** 2]
+                affine = self.p_mass * self.C_lag[p]
                 for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
-                    # Loop over 3x3 grid node neighborhood
                     offset = ti.Vector([i, j, k])
-                    dpos = (offset.cast(float) - fx) * self.dx
+                    dpos = (offset.cast(float) - fx) * \
+                        self.dx
                     weight = w[i][0] * w[j][1] * w[k][2]
-                    self.grid_v[base + offset] += weight * \
-                        self.p_mass * self.v_rp[p]
-                    self.grid_m[base + offset] += weight * self.p_mass
+                    if not ti.math.isnan(self.x_lag.grad[p]).sum():
+                        self.grid_v[base + offset] += weight * (
+                            self.p_mass * self.v_lag[p] - 
+                            self.dt * self.x_lag.grad[p] + affine @ dpos)
+                        self.grid_m[base + offset] += weight * self.p_mass
 
     @ti.kernel
     def grid_op(self):
@@ -535,6 +639,37 @@ class MpmSim:
             for p in self.x_rp:
                 self.x_rp[p] += self.dt * self.v_rp[p]
 
+        if ti.static(self.n_lag_verts):
+            for p in self.x_lag:
+                base = ti.cast(self.x_lag[p] * self.inv_dx - 0.5, ti.i32)
+                fx = self.x_lag[p] * self.inv_dx - float(base)
+                w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0)
+                    ** 2, 0.5 * (fx - 0.5) ** 2]
+                new_v = ti.Vector.zero(T, 3)
+                new_C = ti.Matrix.zero(T, 3, 3)
+                for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
+                    dpos = ti.Vector([i, j, k]).cast(float) - fx
+                    g_v = self.grid_v[base + ti.Vector([i, j, k])]
+                    weight = w[i][0] * w[j][1] * w[k][2]
+                    new_v += weight * g_v
+                    new_C += 4 * self.inv_dx * weight * g_v.outer_product(dpos)
+                self.v_lag[p], self.C_lag[p] = new_v, new_C
+                self.x_lag[p] += self.v_lag[p] * self.dt
+
+
+    @ti.kernel
+    def compute_energy_lag(self):
+        for i in range(self.n_lag_tris):
+            Ds = self.compute_T_lag(i)
+            F = Ds @ self.restInvT_lag[i]
+            f0 = ti.Vector([F[0, 0], F[1, 0], F[2, 0]])
+            f1 = ti.Vector([F[0, 1], F[1, 1], F[2, 1]])
+            Estretch = self.lag_mu * self.tris_area_lag[i] * \
+                ((f0.norm() - 1) ** 2 + (f1.norm() - 1) ** 2)
+            Eshear = self.lag_mu * 0.3 * self.tris_area_lag[i] * f0.dot(f1) ** 2
+            self.energy_lag[None] += Eshear + Estretch
+
+
     def add_body(self, body: Body):
         if isinstance(body, RigidBody):
             self.rigid_bodies.append(body)
@@ -551,6 +686,21 @@ class MpmSim:
             self.n_soft_pars += body.n_pars
         else:
             raise NotImplementedError()
+        
+    def add_lag_body(self, lag_mesh: trimesh.Trimesh, lag_E, lag_nu):
+        self.lag_mesh = lag_mesh
+        self.n_lag_verts = lag_mesh.vertices.shape[0]
+        self.n_lag_tris = lag_mesh.faces.shape[0]
+        self.lag_mu, self.lag_lam = lag_E / (2 * (1 + lag_nu)), lag_E * \
+            lag_nu / ((1 + lag_nu) * (1 - 2 * lag_nu))
+        self.eps = 1e-6
+        pos_mask = (lag_mesh.vertices - self.origin) < 0
+        pos_mask *= (lag_mesh.vertices - self.origin) > 1
+        if pos_mask.sum() > 0:
+            print(
+                'MpmSim: lag mesh body trying to be added is out of the bounding box!')
+
+
     
     def add_boundary(self, bound: Boundary):
         if isinstance(bound, StaticBoundary):
@@ -572,595 +722,6 @@ class MpmSim:
         for b in self.dynamic_bounds:
             b.toward_target()
 
-
-# NOTE: now soft only one support mesh
-# reference: https://github.com/taichi-dev/taichi/blob/master/python/taichi/examples/simulation/mpm_lagrangian_forces.py
-@ti.data_oriented
-class MpmLagSim:
-
-    def __init__(self, dt: float = 1e-4,
-                 origin: np.ndarray = np.zeros((3,), float),
-                 n_grids: int = 128,
-                 scale: float = 1.0) -> None:
-        self.dt = dt
-        self.n_grids = n_grids
-        self.scale = scale
-        self.dx = 1. / self.n_grids
-        self.inv_dx = self.n_grids
-        self.origin = origin
-        self.clear_bodies()
-
-        # TODO: align these parameters in the future
-        self.p_vol, self.p_rho = (self.dx * 0.5)**2, 1
-        self.p_mass = self.p_vol * self.p_rho
-        self.rp_rho = 10
-        self.rp_mass = self.p_vol * self.rp_rho
-
-        E, nu = 1e4, 0.2
-        self.mu, self.lam = E / (2 * (1 + nu)), E * \
-            nu / ((1 + nu) * (1 - 2 * nu))
-        self.eps = 1e-6
-
-        self.window = ti.ui.Window("CPIC-Scene", (768, 768))
-        self.canvas = self.window.get_canvas()
-        self.scene = ti.ui.Scene()
-        self.camera = ti.ui.Camera()
-        self.camera.position(-1, 1, 0.3)
-        self.camera.lookat(0.5, 0.5, 0.5)
-
-    def clear_bodies(self):
-        self.rigid_bodies: List[RigidBody] = []
-        self.n_rigid_pars = 0
-        self.soft_mesh: Optional[trimesh.Trimesh] = None
-        self.n_soft_verts = 0
-        self.n_soft_tris = 0
-
-    def set_camera_pos(self, x, y, z):
-        self.camera.position(x, y, z)
-
-    def camera_lookat(self, x, y, z):
-        self.camera.lookat(x, y, z)
-
-    @property
-    def n_rigid(self):
-        return len(self.rigid_bodies)
-
-    def init_sim(self):
-        self.x_soft = vecs(3, T, self.n_soft_verts, needs_grad=True)
-        self.v_soft = vecs(3, T, self.n_soft_verts)
-        self.C_soft = mats(3, 3, T, self.n_soft_verts)
-        self.restInvT_soft = mats(2, 2, T, self.n_soft_tris)
-        self.energy_soft = scalars(T, shape=(), needs_grad=True)
-        self.tris_soft = scalars(int, (self.n_soft_tris, 3))
-        self.nrm_soft = vecs(3, T, self.n_soft_tris)
-        self.tris_area_soft = scalars(float, (self.n_soft_tris,))
-        self.x_rigid = vecs(3, T, self.n_rigid_pars)
-        self.v_rigid = vecs(3, T, self.n_rigid_pars)
-
-        self.grid_v = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
-        self.grid_m = scalars(T, (self.n_grids, self.n_grids, self.n_grids))
-
-        self.x_soft.from_numpy(np.asarray(
-            self.soft_mesh.vertices) - self.origin)
-        self.tris_soft.from_numpy(np.asarray(self.soft_mesh.faces))
-        soft_face_adjacency = self.soft_mesh.face_adjacency
-        self.n_soft_bends = soft_face_adjacency.shape[0]
-        self.bending_faces = vecs(2, int, self.n_soft_bends)
-        self.rest_bending_soft = scalars(T, shape=(self.n_soft_bends,))
-        self.bending_faces.from_numpy(soft_face_adjacency)
-        self.bending_edges = vecs(2, int, self.n_soft_bends)
-        self.bending_edges.from_numpy(self.soft_mesh.face_adjacency_edges)
-        x_rigid = np.concatenate(
-            [b.rest_pos for b in self.rigid_bodies], axis=0) - self.origin
-        self.x_rigid.from_numpy(x_rigid)
-        self.init_field()
-
-    @ti.func
-    def compute_T_soft(self, i):
-        a, b, c = self.tris_soft[i,
-                                 0], self.tris_soft[i, 1], self.tris_soft[i, 2]
-        xab = self.x_soft[b] - self.x_soft[a]
-        xac = self.x_soft[c] - self.x_soft[a]
-        return ti.Matrix([
-            [xab[0], xac[0]],
-            [xab[1], xac[1]],
-            [xab[2], xac[2]]
-        ])
-
-    @ti.func
-    def compute_area_soft(self, i):
-        a, b, c = self.tris_soft[i,
-                                 0], self.tris_soft[i, 1], self.tris_soft[i, 2]
-        xab = self.x_soft[b] - self.x_soft[a]
-        xac = self.x_soft[c] - self.x_soft[a]
-        return 0.5 * xab.cross(xac).norm()
-
-    @ti.func
-    def compute_normal_soft(self, i):
-        a, b, c = self.tris_soft[i,
-                                 0], self.tris_soft[i, 1], self.tris_soft[i, 2]
-        xab = self.x_soft[b] - self.x_soft[a]
-        xac = self.x_soft[c] - self.x_soft[a]
-        return xab.cross(xac).normalized()
-
-    @ti.kernel
-    def init_field(self):
-        for i in ti.ndrange(self.n_soft_verts):
-            self.v_soft[i] = ti.Vector.zero(T, 3)
-            self.v_rigid[i] = ti.Vector.zero(T, 3)
-            self.C_soft[i] = ti.Matrix.zero(T, 3, 3)
-
-        for i in range(self.n_soft_tris):
-            ds = self.compute_T_soft(i)
-            ds0 = ti.Vector([ds[0, 0], ds[1, 0], ds[2, 0]])
-            ds1 = ti.Vector([ds[0, 1], ds[1, 1], ds[2, 1]])
-            ds0_norm = ds0.norm()
-            IB = ti.Matrix([
-                [ds0_norm, ds0.dot(ds1) / ds0_norm],
-                [0, ds0.cross(ds1).norm() / ds0_norm]
-            ]).inverse()
-            if ti.math.isnan(IB).sum():
-                print('[nan detected during IB computation]')
-                IB = ti.Matrix.zero(T, 2, 2)
-            self.restInvT_soft[i] = IB
-            self.tris_area_soft[i] = self.compute_area_soft(i)
-            self.nrm_soft[i] = self.compute_normal_soft(i)
-
-        for bi in range(self.n_soft_bends):
-            face_inds = self.bending_faces[bi]
-            n0 = self.compute_normal_soft(face_inds[0])
-            n1 = self.compute_normal_soft(face_inds[1])
-            theta = ti.acos(n0.dot(n1))
-            theta = ti.max(theta, ti.abs(self.eps))
-            edge_inds = self.bending_edges[bi]
-            edge = (self.x_soft[edge_inds[1]] -
-                    self.x_soft[edge_inds[0]]).normalized()
-            sin_theta = n0.cross(n1).dot(edge)
-            if sin_theta < 0:
-                theta = - theta
-            self.rest_bending_soft[bi] = theta
-
-    def substep(self):
-        self.grid_m.fill(0)
-        self.grid_v.fill(0)
-        self.energy_soft[None] = 0
-        with ti.ad.Tape(self.energy_soft):
-            self.compute_energy_soft()  # TODO
-        self.P2G()
-        self.grid_op()
-        self.G2P()
-
-    @ti.kernel
-    def P2G(self):
-        for p in self.x_soft:
-            base = ti.cast(self.x_soft[p] * self.inv_dx - 0.5, ti.i32)
-            fx = self.x_soft[p] * self.inv_dx - ti.cast(base, float)
-            w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1)
-                 ** 2, 0.5 * (fx - 0.5) ** 2]
-            affine = self.p_mass * self.C_soft[p]
-            for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
-                offset = ti.Vector([i, j, k])
-                dpos = (offset.cast(float) - fx) * self.dx
-                weight = w[i][0] * w[j][1] * w[k][2]
-                if not ti.math.isnan(self.x_soft.grad[p]).sum():
-                    self.grid_v[base + offset] += weight * (
-                        self.p_mass * self.v_soft[p] - self.dt * self.x_soft.grad[p] + affine @ dpos)
-                    self.grid_m[base + offset] += weight * self.p_mass
-
-        for p in self.x_rigid:
-            base = ti.cast(self.x_rigid[p] * self.inv_dx - 0.5, ti.i32)
-            fx = self.x_rigid[p] * self.inv_dx - ti.cast(base, float)
-            w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1)
-                 ** 2, 0.5 * (fx - 0.5) ** 2]
-            for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
-                offset = ti.Vector([i, j, k])
-                dpos = (offset.cast(float) - fx) * self.dx
-                weight = w[i][0] * w[j][1] * w[k][2]
-                self.grid_v[base + offset] += weight * \
-                    self.rp_mass * self.v_rigid[p]
-                self.grid_m[base + offset] += weight * self.rp_mass
-
-    @ti.kernel
-    def grid_op(self):
-        for i, j, k in self.grid_m:
-            if self.grid_m[i, j, k] > 0:
-                inv_m = 1 / self.grid_m[i, j, k]
-                self.grid_v[i, j, k] = inv_m * self.grid_v[i, j, k]
-
-    @ti.kernel
-    def G2P(self):
-        for p in self.x_soft:
-            base = ti.cast(self.x_soft[p] * self.inv_dx - 0.5, ti.i32)
-            fx = self.x_soft[p] * self.inv_dx - float(base)
-            w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0)
-                 ** 2, 0.5 * (fx - 0.5) ** 2]
-            new_v = ti.Vector.zero(T, 3)
-            new_C = ti.Matrix.zero(T, 3, 3)
-
-            for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
-                dpos = ti.Vector([i, j, k]).cast(float) - fx
-                g_v = self.grid_v[base + ti.Vector([i, j, k])]
-                weight = w[i][0] * w[j][1] * w[k][2]
-                new_v += weight * g_v
-                new_C += 4 * self.inv_dx * weight * g_v.outer_product(dpos)
-
-            self.v_soft[p], self.C_soft[p] = new_v, new_C
-            self.x_soft[p] += self.dt * self.v_soft[p]  # advection
-
-        for p in self.x_rigid:
-            self.x_rigid[p] += self.dt * self.v_rigid[p]
-
-    # reference: https://github.com/zenustech/zeno/blob/master/projects/CuLagrange/fem/Generation.cpp
-    @ti.kernel
-    def compute_energy_soft(self):
-        for i in range(self.n_soft_tris):
-            Ds = self.compute_T_soft(i)
-            F = Ds @ self.restInvT_soft[i]
-            f0 = ti.Vector([F[0, 0], F[1, 0], F[2, 0]])
-            f1 = ti.Vector([F[0, 1], F[1, 1], F[2, 1]])
-            Estretch = self.mu * self.tris_area_soft[i] * \
-                ((f0.norm() - 1) ** 2 + (f1.norm() - 1) ** 2)
-            Eshear = self.mu * 0.3 * self.tris_area_soft[i] * f0.dot(f1) ** 2
-            self.energy_soft[None] += Eshear + Estretch
-
-        # bending
-        for bi in range(self.n_soft_bends):
-            face_inds = self.bending_faces[bi]
-            n0 = self.compute_normal_soft(face_inds[0])
-            n1 = self.compute_normal_soft(face_inds[1])
-            theta = ti.acos(n0.dot(n1))
-            theta = ti.max(theta, ti.abs(self.eps))
-            edge_inds = self.bending_edges[bi]
-            edge = (self.x_soft[edge_inds[1]] -
-                    self.x_soft[edge_inds[0]]).normalized()
-            sin_theta = n0.cross(n1).dot(edge)
-            if sin_theta < 0:
-                theta = - theta
-            area = 0.5 * \
-                (self.tris_area_soft[face_inds[0]] +
-                 self.tris_area_soft[face_inds[1]])
-            self.energy_soft[None] += (theta - self.rest_bending_soft[bi]
-                                       ) ** 2 * area * 0.3 * self.mu
-
-    def add_kinematic_rigid(self, body: RigidBody):
-        self.rigid_bodies.append(body)
-        self.n_rigid_pars += body.n_pars
-        # check boundary
-        pos_mask = (body.rest_pos - self.origin) < 0
-        pos_mask *= (body.rest_pos - self.origin) > 1
-        if pos_mask.sum() > 0:
-            print(
-                'MpmLagSim: kinematic rigid body trying to be added is out of the bounding box!')
-
-    def set_soft(self, body_mesh: trimesh.Trimesh):
-        self.soft_mesh = body_mesh
-        self.n_soft_verts = body_mesh.vertices.shape[0]
-        self.n_soft_tris = body_mesh.faces.shape[0]
-        pos_mask = (body_mesh.vertices - self.origin) < 0
-        pos_mask *= (body_mesh.vertices - self.origin) > 1
-        if pos_mask.sum() > 0:
-            print(
-                'MpmLagSim: soft body trying to be added is out of the bounding box!')
-
-    def toward_kinematic_target(self, substeps=10):
-        rigid_target = np.concatenate(
-            [b.target_pos for b in self.rigid_bodies], axis=0) - self.origin
-        rigid_vel = (rigid_target - self.x_rigid.to_numpy()) / \
-            (self.dt * substeps)
-        self.v_rigid.from_numpy(rigid_vel)
-
-    def update_scene(self):
-        self.scene.set_camera(self.camera)
-        self.scene.ambient_light((0.8, 0.8, 0.8))
-        self.scene.point_light(pos=(0.5, 1.5, 1.5), color=(1, 1, 1))
-
-        self.scene.particles(self.x_soft, color=(
-            0.68, 0.26, 0.19), radius=0.0002)
-        self.scene.particles(self.x_rigid, color=(
-            0.19, 0.26, 0.68), radius=0.002)
-
-    def show(self):
-        self.canvas.scene(self.scene)
-        self.window.show()
-
-# NOTE: now soft only one support mesh
-# reference: https://github.com/taichi-dev/taichi/blob/master/python/taichi/examples/simulation/mpm_lagrangian_forces.py
-
-
-@ti.data_oriented
-class MpmTetLagSim:
-    def __init__(self, dt: float = 1e-4,
-                 origin: np.ndarray = np.zeros((3,), float),
-                 n_grids: int = 128,
-                 scale: float = 1.0) -> None:
-        self.dt = dt
-        self.n_grids = n_grids
-        self.scale = scale
-        self.dx = 1. / self.n_grids
-        self.inv_dx = self.n_grids
-        self.origin = origin
-        self.clear_bodies()
-
-        # TODO: align these parameters in the future
-        self.p_vol, self.p_rho = (self.dx * 0.5)**2, 1
-        self.p_mass = self.p_vol * self.p_rho
-        self.rp_rho = 10
-        self.rp_mass = self.p_vol * self.rp_rho
-
-        E, nu = 1e4, 0.2
-        self.mu, self.lam = E / (2 * (1 + nu)), E * \
-            nu / ((1 + nu) * (1 - 2 * nu))
-        self.eps = 1e-6
-
-        self.window = ti.ui.Window("CPIC-Scene", (768, 768))
-        self.canvas = self.window.get_canvas()
-        self.scene = ti.ui.Scene()
-        self.camera = ti.ui.Camera()
-        self.camera.position(-1, 1, 0.3)
-        self.camera.lookat(0.5, 0.5, 0.5)
-
-        self.query_pos = vecs(3, T, 1)
-        self.queried_collsiion_force = vecs(3, T, 1)
-
-    def clear_bodies(self):
-        self.rigid_bodies: List[RigidBody] = []
-        self.n_rigid_pars = 0
-        self.soft_mesh: Optional[TetMesh] = None
-        self.n_soft_verts = 0
-        self.n_soft_tets = 0
-
-    def set_camera_pos(self, x, y, z):
-        self.camera.position(x, y, z)
-
-    def camera_lookat(self, x, y, z):
-        self.camera.lookat(x, y, z)
-
-    @property
-    def n_rigid(self):
-        return len(self.rigid_bodies)
-
-    def init_sim(self):
-        self.x_soft = vecs(3, T, self.n_soft_verts, needs_grad=True)
-        self.v_soft = vecs(3, T, self.n_soft_verts)
-        self.C_soft = mats(3, 3, T, self.n_soft_verts)
-        self.collision_force_soft = vecs(3, T, self.n_soft_verts)
-        self.elastic_force_soft = vecs(3, T, self.n_soft_verts)
-        self.restIB_soft = mats(3, 3, T, self.n_soft_tets)
-        self.energy_soft = scalars(T, shape=(), needs_grad=True)
-        self.tet_soft = vecs(4, int, self.n_soft_tets)
-        self.tet_vol_soft = scalars(T, shape=(self.n_soft_tets, ))
-        self.x_rigid = vecs(3, T, self.n_rigid_pars)
-        self.v_rigid = vecs(3, T, self.n_rigid_pars)
-
-        self.grid_v = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
-        self.grid_m = scalars(T, (self.n_grids, self.n_grids, self.n_grids))
-        self.grid_qf = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
-
-        self.x_soft.from_numpy(np.asarray(
-            self.soft_mesh.verts) - self.origin)
-        self.tet_soft.from_numpy(self.soft_mesh.tets)
-        x_rigid = np.concatenate(
-            [b.rest_pos for b in self.rigid_bodies], axis=0) - self.origin
-        self.x_rigid.from_numpy(x_rigid)
-        self.init_field()
-
-    @ti.func
-    def compute_T_soft(self, i) -> ti.Matrix:
-        a, b, c, d = self.tet_soft[i][0], self.tet_soft[i][1], \
-            self.tet_soft[i][2], self.tet_soft[i][3]
-        xab = self.x_soft[b] - self.x_soft[a]
-        xac = self.x_soft[c] - self.x_soft[a]
-        xad = self.x_soft[d] - self.x_soft[a]
-        return ti.Matrix([
-            [xab[0], xac[0], xad[0]],
-            [xab[1], xac[1], xad[1]],
-            [xab[2], xac[2], xad[2]]
-        ])
-
-    @ti.func
-    def compute_vol_soft(self, i):
-        return ti.math.abs(self.compute_T_soft(i).determinant())
-
-    @ti.kernel
-    def init_field(self):
-        for i in ti.ndrange(self.n_soft_verts):
-            self.v_soft[i] = ti.Vector.zero(T, 3)
-            self.v_rigid[i] = ti.Vector.zero(T, 3)
-            self.C_soft[i] = ti.Matrix.zero(T, 3, 3)
-            self.collision_force_soft[i] = ti.Vector.zero(T, 3)
-            self.elastic_force_soft[i] = ti.Vector.zero(T, 3)
-
-        for i in range(self.n_soft_tets):
-            B = self.compute_T_soft(i)
-            IB = B.inverse()
-            if ti.math.isnan(IB).sum():
-                print('[nan detected during IB computation]')
-                IB = ti.Matrix.zero(T, 3, 3)
-            self.restIB_soft[i] = IB
-            self.tet_vol_soft[i] = ti.abs(B.determinant())
-
-    def substep(self):
-        self.grid_m.fill(0)
-        self.grid_v.fill(0)
-        self.energy_soft[None] = 0
-        with ti.ad.Tape(self.energy_soft):
-            self.compute_energy_soft()
-        self.P2G()
-        self.grid_op()
-        self.G2P()
-
-    @ti.kernel
-    def P2G(self):
-        for p in self.x_soft:
-            base = ti.cast(self.x_soft[p] * self.inv_dx - 0.5, ti.i32)
-            fx = self.x_soft[p] * self.inv_dx - ti.cast(base, float)
-            w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1)
-                 ** 2, 0.5 * (fx - 0.5) ** 2]
-            affine = self.p_mass * self.C_soft[p]
-            for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
-                offset = ti.Vector([i, j, k])
-                dpos = (offset.cast(float) - fx) * self.dx
-                weight = w[i][0] * w[j][1] * w[k][2]
-                if not ti.math.isnan(self.x_soft.grad[p]).sum():
-                    self.grid_v[base + offset] += weight * (
-                        self.p_mass * self.v_soft[p] - self.dt * self.x_soft.grad[p] + affine @ dpos)
-                    self.grid_m[base + offset] += weight * self.p_mass
-
-        for p in self.x_rigid:
-            base = ti.cast(self.x_rigid[p] * self.inv_dx - 0.5, ti.i32)
-            fx = self.x_rigid[p] * self.inv_dx - ti.cast(base, float)
-            w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1)
-                 ** 2, 0.5 * (fx - 0.5) ** 2]
-            for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
-                offset = ti.Vector([i, j, k])
-                dpos = (offset.cast(float) - fx) * self.dx
-                weight = w[i][0] * w[j][1] * w[k][2]
-                self.grid_v[base + offset] += weight * \
-                    self.rp_mass * self.v_rigid[p]
-                self.grid_m[base + offset] += weight * self.rp_mass
-
-    @ti.kernel
-    def grid_op(self):
-        for i, j, k in self.grid_m:
-            if self.grid_m[i, j, k] > 0:
-                inv_m = 1 / self.grid_m[i, j, k]
-                self.grid_v[i, j, k] = inv_m * self.grid_v[i, j, k]
-
-    @ti.kernel
-    def G2P(self):
-        for p in self.x_soft:
-            base = ti.cast(self.x_soft[p] * self.inv_dx - 0.5, ti.i32)
-            fx = self.x_soft[p] * self.inv_dx - float(base)
-            w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0)
-                 ** 2, 0.5 * (fx - 0.5) ** 2]
-            new_v = ti.Vector.zero(T, 3)
-            new_C = ti.Matrix.zero(T, 3, 3)
-
-            for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
-                dpos = ti.Vector([i, j, k]).cast(float) - fx
-                g_v = self.grid_v[base + ti.Vector([i, j, k])]
-                weight = w[i][0] * w[j][1] * w[k][2]
-                new_v += weight * g_v
-                new_C += 4 * self.inv_dx * weight * g_v.outer_product(dpos)
-
-            a = (new_v - self.v_soft[p]) / self.dt
-            # ma = collision_force + elastic_force
-            self.elastic_force_soft[p] = self.x_soft.grad[p]
-            self.collision_force_soft[p] = self.p_mass * \
-                a - self.elastic_force_soft[p]
-
-            self.v_soft[p], self.C_soft[p] = new_v, new_C
-            self.x_soft[p] += self.dt * self.v_soft[p]  # advection
-
-        for p in self.x_rigid:
-            self.x_rigid[p] += self.dt * self.v_rigid[p]
-
-    def query_collision_force(self, query_points: np.ndarray):
-        n_points = query_points.shape[0]
-        if self.query_pos.shape[0] != n_points:
-            self.query_pos = vecs(3, T, n_points)
-            self.queried_collsiion_force = vecs(3, T, n_points)
-        self.query_pos.from_numpy(query_points - self.origin)
-        self.grid_m.fill(0)
-        self.grid_qf.fill(0)
-        self.queried_collsiion_force.fill(0)
-        self.interpolate_collision_force()
-        return self.queried_collsiion_force.to_numpy()
-
-    @ti.kernel
-    def interpolate_collision_force(self):
-        for p in self.x_soft:
-            if not self.is_surface_soft[p]:
-                continue
-            base = ti.cast(self.x_soft[p] * self.inv_dx - 0.5, ti.i32)
-            fx = self.x_soft[p] * self.inv_dx - ti.cast(base, float)
-            w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1)
-                 ** 2, 0.5 * (fx - 0.5) ** 2]
-            for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
-                offset = ti.Vector([i, j, k])
-                weight = w[i][0] * w[j][1] * w[k][2]
-                self.grid_qf[base + offset] += weight * \
-                    self.p_mass * self.collision_force_soft[p]
-                self.grid_m[base + offset] += weight * self.p_mass
-
-        for i, j, k in self.grid_m:
-            if self.grid_m[i, j, k] > 0:
-                inv_m = 1 / self.grid_m[i, j, k]
-                self.grid_qf[i, j, k] = inv_m * self.grid_qf[i, j, k]
-
-        for p in self.query_pos:
-            base = ti.cast(self.query_pos[p] * self.inv_dx - 0.5, ti.i32)
-            fx = self.query_pos[p] * self.inv_dx - float(base)
-            w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0)
-                 ** 2, 0.5 * (fx - 0.5) ** 2]
-            new_qf = ti.Vector.zero(T, 3)
-            for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
-                weight = w[i][0] * w[j][1] * w[k][2]
-                new_qf += weight * self.grid_qf[base + ti.Vector([i, j, k])]
-            self.queried_collsiion_force[p] = new_qf
-
-    @ti.kernel
-    def compute_energy_soft(self):
-        for i in range(self.n_soft_tets):
-            D = self.compute_T_soft(i)
-            F = D @ self.restIB_soft[i]
-            logJ = ti.math.log(ti.max(F.determinant(), 0.1))
-            energy_density = self.mu * 0.5 * \
-                ((F.transpose() @ F).trace() - 3) - \
-                self.mu * logJ + 0.5 * self.lam * logJ**2
-            self.energy_soft[None] += energy_density * self.tet_vol_soft[i]
-
-    def add_kinematic_rigid(self, body: RigidBody):
-        self.rigid_bodies.append(body)
-        self.n_rigid_pars += body.n_pars
-        # check boundary
-        pos_mask = (body.rest_pos - self.origin) < 0
-        pos_mask *= (body.rest_pos - self.origin) > 1
-        if pos_mask.sum() > 0:
-            print(
-                'MpmLagSim: kinematic rigid body trying to be added is out of the bounding box!')
-
-    def set_soft(self, body_mesh: TetMesh):
-        self.soft_mesh = body_mesh
-        self.n_soft_verts = body_mesh.n_verts
-        self.n_soft_tets = body_mesh.n_tets
-        self.is_surface_soft = scalars(bool, (self.n_soft_verts))
-        self.is_surface_soft.fill(False)
-        self.soft_surf_vinds = scalars(int, (self.soft_mesh.surf_vert_inds.shape[0]))
-        self.soft_surf_vinds.from_numpy(self.soft_mesh.surf_vert_inds)
-        self.compute_is_surface_soft()
-        pos_mask = (self.soft_mesh.verts - self.origin) < 0
-        pos_mask *= (self.soft_mesh.verts - self.origin) > 1
-        if pos_mask.sum() > 0:
-            print(
-                'MpmLagSim: soft body trying to be added is out of the bounding box!')
-
-    @ti.kernel
-    def compute_is_surface_soft(self):
-        for si in self.soft_surf_vinds:
-            vi = self.soft_surf_vinds[si]
-            self.is_surface_soft[vi] = True
-
-    def toward_kinematic_target(self, substeps=10):
-        rigid_target = np.concatenate(
-            [b.target_pos for b in self.rigid_bodies], axis=0) - self.origin
-        rigid_vel = (rigid_target - self.x_rigid.to_numpy()) / \
-            (self.dt * substeps)
-        self.v_rigid.from_numpy(rigid_vel)
-
-    def update_scene(self):
-        self.scene.set_camera(self.camera)
-        self.scene.ambient_light((0.8, 0.8, 0.8))
-        self.scene.point_light(pos=(0.5, 1.5, 1.5), color=(1, 1, 1))
-
-        self.scene.particles(self.x_soft, color=(
-            0.68, 0.26, 0.19), radius=0.0002)
-        self.scene.particles(self.x_rigid, color=(
-            0.19, 0.26, 0.68), radius=0.002)
-
-    def show(self):
-        self.canvas.scene(self.scene)
-        self.window.show()
 
 
 def test_mpm():
