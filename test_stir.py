@@ -21,7 +21,7 @@ def test_sim():
 
     cut_folder = './data/cut/cut0001/'
 
-    nhk = NeoHookean(10000, 0.1)
+    nhk = NeoHookean(0, 0)
     dumpling_mesh = trimesh.load_mesh(pjoin(cut_folder, 'dumpling1.obj'))
     dumpling_points = dumpling_mesh.sample(8192)
     dumpling_points += np.array([0, -0.1, 0])
@@ -45,8 +45,8 @@ def test_sim():
     sim.add_boundary(chopping_board)
     sim.add_boundary(knife)
     sim.add_body(dumpling)
-    
-    sim.add_lag_body(dumpling_mesh, 1000, 0.1)
+
+    # sim.add_lag_body(dumpling_mesh, 1000, 0.1)
 
     sim.init_system()
 

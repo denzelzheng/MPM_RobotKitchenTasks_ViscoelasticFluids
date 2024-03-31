@@ -12,27 +12,126 @@ import igl
 # current: only neo-hookean + rigid body
 
 
+@ti.func
+def compute_P_hat(sig, mu, lam):
+    epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
+    sum_log = epsilon[0] + epsilon[1] + epsilon[2]
+    psi_0 = (2 * mu * epsilon[0] + lam * sum_log) / sig[0, 0]
+    psi_1 = (2 * mu * epsilon[1] + lam * sum_log) / sig[1, 1]
+    psi_2 = (2 * mu * epsilon[2] + lam * sum_log) / sig[2, 2]
+    P_hat =  ti.Vector([psi_0, psi_1, psi_2])
+    return P_hat
+
+
+
 @ti.data_oriented
 class Material:
     pass
 
-# NOTE: now only support NeoHookean for soft bodies
+    @ti.func
+    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
+        raise NotImplementedError
+
+
+
+
 # NOTE: for rigid bodies, now only support kinematic movements
 
 
 class NeoHookean(Material):
-    def __init__(self, E: float = 0.1e4, nu: float = 0.2) -> None:
+    def __init__(self, E: float = 5e3, nu: float = 0.2) -> None:
         super().__init__()
         self.mu, self.lam = E / (2 * (1 + nu)), E * \
             nu / ((1+nu) * (1 - 2 * nu))
-
+        
     @ti.func
-    def energy(self, F: mat3):
-        logJ = ti.math.log(F.determinant())
-        return 0.5 * self.mu * ((F.transpose() * F).trace() - 3) - \
-            self.mu * logJ + 0.5 * self.lam * logJ ** 2
+    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
+        kirchhoff_stress = 2 * self.mu * (F - U @ V.transpose()) @ \
+                    F.transpose() + ti.Matrix.identity(float, 3) * \
+                    self.lam * J * (J - 1)
+        return kirchhoff_stress, F
 
 
+
+class StVK_with_Hecky_strain(Material):
+    def __init__(self, E: float = 5e3, nu: float = 0.2) -> None:
+        super().__init__()
+        self.mu, self.lam = E / (2 * (1 + nu)), E * \
+            nu / ((1+nu) * (1 - 2 * nu))
+    
+    @ti.func
+    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
+        P_hat = compute_P_hat(sig, self.mu, self.lam)
+        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
+        kirchhoff_stress = P @ F.transpose()
+        return kirchhoff_stress, F
+
+
+
+class visco_StVK_with_Hecky_strain(Material):
+    def __init__(self, E: float = 5e3, nu: float = 0.2, viscosity_v: float = 1, viscosity_d: float = 1) -> None:
+        super().__init__()
+        self.mu, self.lam = E / (2 * (1 + nu)), E * \
+            nu / ((1+nu) * (1 - 2 * nu))
+        self.viscosity_v = viscosity_v
+        self.viscosity_d = viscosity_d
+    
+    @ti.func
+    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
+        P_hat = compute_P_hat(sig, self.mu, self.lam)
+        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
+        kirchhoff_stress = P @ F.transpose()
+
+        epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
+        alpha = 2.0 * self.mu / self.viscosity_d
+        beta = 2.0 * (2.0 * self.mu + self.lam * 3) / (9.0 * self.viscosity_v) - 2.0 * self.mu / (self.viscosity_d * 3)
+        A = 1 / (1 + dt * alpha)
+        B = dt * beta / (1 + dt * (alpha + 3 * beta))
+        epsilon_trace = ti.log(sig[0, 0]) + ti.log(sig[1, 1]) + ti.log(sig[2, 2])
+        temp_epsilon = A * (epsilon - ti.Vector([B * epsilon_trace, B * epsilon_trace, B * epsilon_trace]) )  
+        d = ti.exp(temp_epsilon)
+        new_sig = ti.Matrix([[d[0], 0.0, 0.0], [0.0, d[1], 0.0], [0.0, 0.0, d[2]]])
+        new_F = U @ new_sig @ V.transpose()
+        P_hat = compute_P_hat(new_sig, self.mu, self.lam)
+        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
+        kirchhoff_stress_visco = P @ new_F.transpose()
+        return (kirchhoff_stress_visco + kirchhoff_stress) / 2, new_F
+
+
+
+
+class visco_fluid_StVK_with_Hecky_strain(Material):
+    def __init__(self, E: float = 5e3, nu: float = 0.2, viscosity_v: float = 1, viscosity_d: float = 1) -> None:
+        super().__init__()
+        self.mu, self.lam = E / (2 * (1 + nu)), E * \
+            nu / ((1+nu) * (1 - 2 * nu))
+        self.viscosity_v = viscosity_v
+        self.viscosity_d = viscosity_d
+    
+    @ti.func
+    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
+        P_hat = compute_P_hat(sig, self.mu, self.lam)
+        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
+        F = ti.Matrix.identity(T, 3) * ti.sqrt(J)
+        kirchhoff_stress = P @ F.transpose()
+
+        epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
+        alpha = 2.0 * self.mu / self.viscosity_d
+        beta = 2.0 * (2.0 * self.mu + self.lam * 3) / (9.0 * self.viscosity_v) - 2.0 * self.mu / (self.viscosity_d * 3)
+        A = 1 / (1 + dt * alpha)
+        B = dt * beta / (1 + dt * (alpha + 3 * beta))
+        epsilon_trace = ti.log(sig[0, 0]) + ti.log(sig[1, 1]) + ti.log(sig[2, 2])
+        temp_epsilon = A * (epsilon - ti.Vector([B * epsilon_trace, B * epsilon_trace, B * epsilon_trace]) )  
+        d = ti.exp(temp_epsilon)
+        new_sig = ti.Matrix([[d[0], 0.0, 0.0], [0.0, d[1], 0.0], [0.0, 0.0, d[2]]])
+        new_F = U @ new_sig @ V.transpose()
+        P_hat = compute_P_hat(new_sig, self.mu, self.lam)
+        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
+        new_J = new_F.determinant()
+        new_F = ti.Matrix.identity(T, 3) * ti.sqrt(new_J)
+        kirchhoff_stress_visco = P @ new_F.transpose()
+        
+        return (kirchhoff_stress_visco + kirchhoff_stress) / 2, new_F
 
 
 class Boundary:
@@ -218,7 +317,7 @@ class SoftBody(Body):
     @property
     def n_pars(self):
         return self.rest_pos.shape[0]
-
+    
 
 class RigidBody(Body):
     def __init__(self, mesh: trimesh.Trimesh, dx=1/128) -> None:
@@ -275,9 +374,10 @@ class MpmSim:
         self.rp_rho = 10
         self.rp_mass = self.p_vol * self.rp_rho
 
-        E, nu = 5e3, 0.2
-        self.mu, self.lam = E / (2 * (1 + nu)), E * \
-            nu / ((1 + nu) * (1 - 2 * nu))
+        # E, nu = 5e3, 0.2
+        # self.mu, self.lam = E / (2 * (1 + nu)), E * \
+        #     nu / ((1 + nu) * (1 - 2 * nu))
+
 
     @property
     def n_static_bounds(self):
@@ -458,8 +558,8 @@ class MpmSim:
                 self.restInvT_lag[i] = IB
                 self.tris_area_lag[i] = self.compute_area_lag(i)
                 self.nrm_lag[i] = self.compute_normal_lag(i)
-        for i, j in ti.ndrange(self.n_lag_tris, 3):
-            self.tris_lag_expanded[i * 3 + j] = self.tris_lag[i, j]
+            for i, j in ti.ndrange(self.n_lag_tris, 3):
+                self.tris_lag_expanded[i * 3 + j] = self.tris_lag[i, j]
 
 
 
@@ -529,9 +629,8 @@ class MpmSim:
                     self.Jp[p] *= sig[d, d] / new_sig
                     sig[d, d] = new_sig
                     J *= new_sig
-                stress = 2 * self.mu * (self.F[p] - U @ V.transpose()) @ \
-                    self.F[p].transpose() + ti.Matrix.identity(float, 3) * \
-                    self.lam * J * (J - 1)
+                stress, new_F = self.material.compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt)
+                self.F[p] = new_F
                 stress = (-self.dt * self.p_vol * 4 * self.inv_dx ** 2) * stress
                 affine = stress + self.p_mass * self.C[p]
                 for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
@@ -684,6 +783,7 @@ class MpmSim:
         elif isinstance(body, SoftBody):
             self.deformable_bodies.append(body)
             self.n_soft_pars += body.n_pars
+            self.material = body.material
         else:
             raise NotImplementedError()
         
@@ -760,30 +860,6 @@ def test_mpm():
         sim.toward_target(substeps)
         steps += 1
 
-
-def test_lag_mpm():
-    ti.init(arch=ti.cuda)
-    dt = 1e-4
-    sim = MpmLagSim(origin=np.asarray([-0.5,] * 3), dt=dt)
-    box_mesh = trimesh.load_mesh(pjoin('./data/object_meshes', 'box.obj'))
-    wrist_mesh = trimesh.load_mesh('./data/Mano_URDF/meshes/m_avg_R_Wrist.stl')
-    wrist_verts = np.asarray(wrist_mesh.vertices)
-    wrist_mesh.vertices = np.concatenate(
-        [wrist_verts[:, [2]], -wrist_verts[:, [0]], wrist_verts[:, [1]]], axis=1)
-    wrist_mesh.apply_translation(np.asarray([0., 0.2, 0.15]))
-    rigid_wrist = RigidBody(wrist_mesh)
-
-    sim.add_kinematic_rigid(rigid_wrist)
-    sim.set_soft(box_mesh)
-    sim.init_sim()
-
-    while not sim.window.is_pressed(ti.GUI.ESCAPE):
-        wrist_mesh.apply_translation(np.asarray([0., -0.001, 0.]))
-        rigid_wrist.set_target(wrist_mesh.vertices)
-        sim.substep()
-        sim.update_scene()
-        sim.show()
-        sim.toward_kinematic_target()
 
 
 if __name__ == '__main__':

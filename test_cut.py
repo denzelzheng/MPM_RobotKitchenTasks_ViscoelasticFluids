@@ -4,7 +4,7 @@ from config import mano_urdf_path, points_data_path
 import numpy as np
 import trimesh
 from os.path import join as pjoin
-from sim import StaticBoundary, DynamicBoundary, RigidBody, SoftBody, NeoHookean, MpmSim
+from sim import StaticBoundary, DynamicBoundary, RigidBody, SoftBody, MpmSim
 from icecream import ic
 from models import ManoHand, ManoHandSensors
 import json
@@ -12,7 +12,8 @@ from vedo import show
 from scipy.spatial.transform import Rotation as R
 from utils import trimesh_show, fix_unity_urdf_tf, read_tet, \
     interpolate_from_mesh
-
+from sim import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain, \
+    visco_fluid_StVK_with_Hecky_strain
 
 def test_sim():
     ti.init(arch=ti.cuda)
@@ -20,12 +21,12 @@ def test_sim():
     substeps = 5
 
     cut_folder = './data/cut/cut0001/'
-
-    nhk = NeoHookean(10000, 0.1)
+    material = visco_StVK_with_Hecky_strain(5e3, 0.1, 1e-3, 1e-3)
+    # material = visco_fluid_StVK_with_Hecky_strain(1e3, 0.1, 1e-2, 1e-2)
     dumpling_mesh = trimesh.load_mesh(pjoin(cut_folder, 'dumpling1.obj'))
     dumpling_points = dumpling_mesh.sample(8192)
     dumpling_points += np.array([0, -0.1, 0])
-    dumpling = SoftBody(dumpling_points, nhk)
+    dumpling = SoftBody(dumpling_points, material)
 
     chopping_board_mesh = trimesh.load_mesh(pjoin(cut_folder, 'chopping_board.obj'))
     chopping_board_mesh.vertices += np.array([0.5, 0.4, 0.5])
