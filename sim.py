@@ -344,7 +344,7 @@ class MpmSim:
         # TODO: align these parameters in the future
         self.p_vol, self.p_rho = (self.dx * 0.5)**2, 1
         self.p_mass = self.p_vol * self.p_rho
-        self.rp_rho = 10
+        self.rp_rho = 30
         self.rp_mass = self.p_vol * self.rp_rho
 
         # E, nu = 5e3, 0.2
@@ -630,7 +630,7 @@ class MpmSim:
                 fx = self.x_lag[p] * self.inv_dx - ti.cast(base, float)
                 w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1)
                     ** 2, 0.5 * (fx - 0.5) ** 2]
-                affine = self.p_mass * self.C_lag[p]
+                affine = self.rp_mass * self.C_lag[p]
                 for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
                     offset = ti.Vector([i, j, k])
                     dpos = (offset.cast(float) - fx) * \
@@ -638,9 +638,9 @@ class MpmSim:
                     weight = w[i][0] * w[j][1] * w[k][2]
                     if not ti.math.isnan(self.x_lag.grad[p]).sum():
                         self.grid_v[base + offset] += weight * (
-                            self.p_mass * self.v_lag[p] - 
+                            self.rp_mass * self.v_lag[p] - 
                             self.dt * self.x_lag.grad[p] + affine @ dpos)
-                        self.grid_m[base + offset] += weight * self.p_mass
+                        self.grid_m[base + offset] += weight * self.rp_mass
 
     @ti.kernel
     def grid_op(self):
