@@ -25,12 +25,20 @@ def test_sim():
     stir_folder = './data/stir/'
     cut_folder = './data/cut/cut0001/'
     equilibrated_material = StVK_with_Hecky_strain(0.3, 0.15, True)
-    non_equilibrated_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 1, 0, 0.5, 1, False)
+    non_equilibrated_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 1, 0, 0.7, 1)
 
     fluid_par = np.random.rand(15000, 3) * 0.15
     fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])
-    non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material)
-    equilibrated_fluid = SoftBody(fluid_par, equilibrated_material)
+    fluid_par1 = np.random.rand(15000, 3) * 0.15
+    fluid_par1 = fluid_par1 - fluid_par1.mean(axis=0) + np.array([0.0, -0.01, 0.0])
+    non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material, np.array([0.85, 0.65, 0.1]))
+    equilibrated_fluid = SoftBody(fluid_par1, equilibrated_material, np.array([0.85, 0.65, 0.1]))
+
+    fluid_par2 = np.random.rand(5000, 3) * 0.05
+    fluid_par2 = fluid_par2 - fluid_par2.mean(axis=0) + np.array([0.0, 0.1, 0.0])
+    sauce_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 0.1, 0.1, 1, 1)
+    sauce = SoftBody(fluid_par2, sauce_material, np.array([0.23, 0.17, 0.1]))
+
 
     chopping_board_mesh = trimesh.load_mesh(pjoin(cut_folder, 'chopping_board.obj'))
     chopping_board_mesh.vertices += np.array([0.5, 0.4, 0.5])
@@ -68,6 +76,7 @@ def test_sim():
     sim.add_lag_body(basin_mesh_lag, 1.5e4, 0.1)
     sim.add_body(non_equilibrated_fluid)
     sim.add_body(equilibrated_fluid)
+    sim.add_body(sauce)
     sim.init_system()
 
     print("start simulation...")

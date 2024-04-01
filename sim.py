@@ -326,9 +326,10 @@ class Body:
 
 
 class SoftBody(Body):
-    def __init__(self, rest_pars_pos: np.ndarray, material: Material) -> None:
+    def __init__(self, rest_pars_pos: np.ndarray, material: Material, color: np.ndarray) -> None:
         self.rest_pos: np.ndarray = rest_pars_pos
         self.material: Material = material
+        self.color: np.ndarray = color
 
     @property
     def n_pars(self):
@@ -425,6 +426,7 @@ class MpmSim:
         self.deformable_bodies = []
         self.materials = []
         self.body_pars = []
+        self.body_colors = []
 
         # fileds
         self.x: Optional[vecs] = None
@@ -438,9 +440,6 @@ class MpmSim:
         self.grid_v: Optional[vecs] = None
         self.grid_m: Optional[scalars] = None
 
-
-        # # debug
-        # self.new_visco: Optional[scalars] = None
 
         self.n_soft_pars: int = 0
         self.n_rigid_tris: int = 0
@@ -499,11 +498,11 @@ class MpmSim:
             np_body_id = np.concatenate([np.full(pars, i) for i, pars in enumerate(self.body_pars)])
             self.x_body_id.from_numpy(np_body_id)
 
-            colors = np.random.rand(self.n_soft_pars, 3)
-            self.x_color.from_numpy(np.array(colors))
-            
-            # # debug
-            # self.new_visco = scalars(T, self.n_soft_pars)
+            # colors = np.random.rand(self.n_soft_pars, 3)
+            # self.x_color.from_numpy(np.array(colors))
+
+            np_colors = np.concatenate([np.tile(color, (pars, 1)) for color, pars in zip(self.body_colors, self.body_pars)])
+            self.x_color.from_numpy(np.array(np_colors))
 
         self.grid_v = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
         self.grid_m = scalars(T, (self.n_grids, self.n_grids, self.n_grids))
@@ -646,10 +645,6 @@ class MpmSim:
         if self.n_lag_verts:
             self.scene.mesh(self.x_lag, self.tris_lag_expanded, color=(0.15, 0.15, 0.3))
 
-
-        # # debug
-        # print(self.new_visco.to_numpy())
-
     def show(self):
         self.canvas.scene(self.scene)
         self.window.show()
@@ -674,16 +669,6 @@ class MpmSim:
                     sig[d, d] = new_sig
                     J *= new_sig
 
-                # # debug
-                # D = (self.C[p] + self.C[p].transpose()) / 2.0
-                # shear_rate = ti.sqrt(2.0 * (D[0, 1] ** 2 + D[0, 2] ** 2 + D[1, 2] ** 2))
-                # viscosity_inf = 1
-                # viscosity_0 = 1e-5
-                # K = 1e1  # 时间常数的倒数
-                # m = 1  # 控制剪切变稀强度的参数
-                # self.new_visco[p] = viscosity_inf + (viscosity_0 - viscosity_inf) / (1.0 + ti.pow(K * shear_rate, m))
-
-                # self.x_body_id[p]
                 stress, new_F = self.materials[0].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
                 for i in ti.static(range(len(self.materials))):
                     if i == self.x_body_id[p]:
@@ -844,6 +829,7 @@ class MpmSim:
             self.n_soft_pars += body.n_pars
             self.body_pars.append(body.n_pars)
             self.materials.append(body.material)
+            self.body_colors.append(body.color)
         else:
             raise NotImplementedError()
         

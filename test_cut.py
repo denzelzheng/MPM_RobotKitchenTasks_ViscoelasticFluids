@@ -21,7 +21,7 @@ def test_sim():
 
     cut_folder = './data/cut/cut0001/'
     equilibrated_material = StVK_with_Hecky_strain(1e3, 0.15)
-    non_equilibrated_material = visco_StVK_with_Hecky_strain(1e3, 0.15, 0.3, 0.3)
+    non_equilibrated_material = visco_StVK_with_Hecky_strain(3e3, 0.15, 1)
     dumpling_mesh = trimesh.load_mesh(pjoin(cut_folder, 'dumpling1.obj'))
     dumpling_points = dumpling_mesh.sample(8192)
     dumpling_points += np.array([0, -0.1, 0])
@@ -45,7 +45,7 @@ def test_sim():
     # sim.set_camera_pos(0.75, 1, 0.3)
     sim.add_boundary(chopping_board)
     sim.add_boundary(knife)
-    sim.add_body(dumpling)
+    # sim.add_body(dumpling)     # make it look like rubber
     sim.add_body(dumpling_visco)
     sim.init_system()
 
