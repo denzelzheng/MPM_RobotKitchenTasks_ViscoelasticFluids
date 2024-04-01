@@ -12,7 +12,9 @@ from vedo import show
 from scipy.spatial.transform import Rotation as R
 from utils import trimesh_show, fix_unity_urdf_tf, read_tet, \
     interpolate_from_mesh, rotate_mesh
-from sim import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain
+from sim import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain, \
+    cross_visco_StVK_with_Hecky_strain
+
 
 def test_sim():
     ti.init(arch=ti.cuda)
@@ -20,11 +22,10 @@ def test_sim():
 
     substeps = 5
 
-
     stir_folder = './data/stir/'
     cut_folder = './data/cut/cut0001/'
-    equilibrated_material = StVK_with_Hecky_strain(3, 0.15, True)
-    non_equilibrated_material = visco_StVK_with_Hecky_strain(3, 0.15, 1e-3, 1e-3, False)
+    equilibrated_material = StVK_with_Hecky_strain(0.3, 0.15, True)
+    non_equilibrated_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 1, 0, 0.5, 1, False)
 
     fluid_par = np.random.rand(15000, 3) * 0.15
     fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])
@@ -79,11 +80,11 @@ def test_sim():
     stir_limit = 0.07
     circle_radius = stir_limit
     angle = 0
-    angle_step = 0.001 
+    angle_step = 0.003 
 
     while not sim.window.is_pressed(ti.GUI.ESCAPE):
         for s in range(substeps):
-            if down and y <= -0.15:
+            if down and y <= -0.16:
                 down = False
             if down:
                 y -= 0.00005

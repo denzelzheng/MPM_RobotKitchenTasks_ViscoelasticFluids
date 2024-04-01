@@ -29,7 +29,7 @@ class Material:
     pass
 
     @ti.func
-    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
+    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt, C):
         raise NotImplementedError
 
 
@@ -46,7 +46,7 @@ class NeoHookean(Material):
         self.fluid = fluid
         
     @ti.func
-    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
+    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt, C):
         if self.fluid:
             F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
         kirchhoff_stress = 2 * self.mu * (F - U @ V.transpose()) @ \
@@ -64,7 +64,7 @@ class StVK_with_Hecky_strain(Material):
         self.fluid = fluid
     
     @ti.func
-    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
+    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt, C):
         P_hat = compute_P_hat(sig, self.mu, self.lam)
         P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
         if self.fluid:
@@ -76,16 +76,16 @@ class StVK_with_Hecky_strain(Material):
 
 
 class visco_StVK_with_Hecky_strain(Material):
-    def __init__(self, E: float = 5e3, nu: float = 0.2, viscosity_v: float = 1, viscosity_d: float = 1, fluid: bool = False) -> None:
+    def __init__(self, E: float = 5e3, nu: float = 0.2, viscosity_v: float = 1, fluid: bool = False) -> None:
         super().__init__()
         self.mu, self.lam = E / (2 * (1 + nu)), E * \
             nu / ((1+nu) * (1 - 2 * nu))
         self.viscosity_v = viscosity_v
-        self.viscosity_d = viscosity_d
+        self.viscosity_d = viscosity_v  # 假设体积粘度与偏差粘度相同
         self.fluid = fluid
     
     @ti.func
-    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
+    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt, C):
 
         epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
         alpha = 2.0 * self.mu / self.viscosity_d
@@ -99,7 +99,50 @@ class visco_StVK_with_Hecky_strain(Material):
         new_F = U @ new_sig @ V.transpose()
         P_hat = compute_P_hat(new_sig, self.mu, self.lam)
         P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
-        new_J = new_F.determinant()
+        # new_J = new_F.determinant()
+        if self.fluid:
+            new_F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
+        kirchhoff_stress_visco = P @ new_F.transpose()
+        
+        return kirchhoff_stress_visco, new_F
+
+
+
+class cross_visco_StVK_with_Hecky_strain(Material):
+    def __init__(self, E: float = 5e3, nu: float = 0.2, viscosity_v: float = 1, 
+                 viscosity_inf: float = 0, K: float = 0.1, m: float = 1, fluid: bool = False) -> None:
+        super().__init__()
+        self.mu, self.lam = E / (2 * (1 + nu)), E * \
+            nu / ((1+nu) * (1 - 2 * nu))
+        self.viscosity_v = viscosity_v
+        self.viscosity_d = viscosity_v # 假设体积粘度与偏差粘度相同
+        self.fluid = fluid
+        self.K = K # 时间常数的倒数
+        self.m = m # 控制剪切变稀强度的参数
+        self.viscosity_inf = viscosity_inf #无限剪切速率下的粘度
+    
+    @ti.func
+    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt, C):
+
+        D = (C + C.transpose()) / 2.0
+        shear_rate = ti.sqrt(2.0 * (D[0, 1] ** 2 + D[0, 2] ** 2 + D[1, 2] ** 2))
+        viscosity_0 = self.viscosity_d
+        new_viscosity_d = self.viscosity_inf + (viscosity_0 - self.viscosity_inf) / (1.0 + ti.pow(self.K * shear_rate, self.m))
+        new_viscosity_v = new_viscosity_d
+
+        epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
+        alpha = 2.0 * self.mu / new_viscosity_d
+        beta = 2.0 * (2.0 * self.mu + self.lam * 3) / (9.0 * new_viscosity_v) - 2.0 * self.mu / (new_viscosity_d * 3)
+        A = 1 / (1 + dt * alpha)
+        B = dt * beta / (1 + dt * (alpha + 3 * beta))
+        epsilon_trace = ti.log(sig[0, 0]) + ti.log(sig[1, 1]) + ti.log(sig[2, 2])
+        temp_epsilon = A * (epsilon - ti.Vector([B * epsilon_trace, B * epsilon_trace, B * epsilon_trace]) )  
+        d = ti.exp(temp_epsilon)
+        new_sig = ti.Matrix([[d[0], 0.0, 0.0], [0.0, d[1], 0.0], [0.0, 0.0, d[2]]])
+        new_F = U @ new_sig @ V.transpose()
+        P_hat = compute_P_hat(new_sig, self.mu, self.lam)
+        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
+        # new_J = new_F.determinant()
         if self.fluid:
             new_F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
         kirchhoff_stress_visco = P @ new_F.transpose()
@@ -380,9 +423,12 @@ class MpmSim:
         self.rigid_pars_offsets = []
         self.rigid_sizes = []
         self.deformable_bodies = []
+        self.materials = []
+        self.body_pars = []
 
         # fileds
         self.x: Optional[vecs] = None
+        self.x_body_id: Optional[scalars] = None
         self.x_color: Optional[vecs] = None
         self.v: Optional[vecs] = None
         self.C: Optional[mats] = None
@@ -391,6 +437,10 @@ class MpmSim:
         self.Jp: Optional[scalars] = None
         self.grid_v: Optional[vecs] = None
         self.grid_m: Optional[scalars] = None
+
+
+        # # debug
+        # self.new_visco: Optional[scalars] = None
 
         self.n_soft_pars: int = 0
         self.n_rigid_tris: int = 0
@@ -440,13 +490,20 @@ class MpmSim:
             self.C = mats(3, 3, T, self.n_soft_pars)
             self.F = mats(3, 3, T, self.n_soft_pars)
             # TODO: material
+            self.x_body_id = scalars(ti.i32, self.n_soft_pars)
             self.Jp = scalars(T, self.n_soft_pars)
             np_x = np.concatenate(
                 [b.rest_pos for b in self.deformable_bodies], axis=0) 
             self.x.from_numpy(np_x - self.origin)
 
+            np_body_id = np.concatenate([np.full(pars, i) for i, pars in enumerate(self.body_pars)])
+            self.x_body_id.from_numpy(np_body_id)
+
             colors = np.random.rand(self.n_soft_pars, 3)
             self.x_color.from_numpy(np.array(colors))
+            
+            # # debug
+            # self.new_visco = scalars(T, self.n_soft_pars)
 
         self.grid_v = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
         self.grid_m = scalars(T, (self.n_grids, self.n_grids, self.n_grids))
@@ -575,7 +632,7 @@ class MpmSim:
                 0.68, 0.26, 0.19), radius=0.002)
 
         if self.x:
-            self.scene.particles(self.x, per_vertex_color=self.x_color, radius=0.002)
+            self.scene.particles(self.x, per_vertex_color=self.x_color, radius=0.005)
 
         if self.x_rp:
             self.scene.particles(self.x_rp, color=(
@@ -588,6 +645,10 @@ class MpmSim:
                 self.scene.mesh(b.vertices, b.faces, color=(0.25, 0.25, 0.25))
         if self.n_lag_verts:
             self.scene.mesh(self.x_lag, self.tris_lag_expanded, color=(0.15, 0.15, 0.3))
+
+
+        # # debug
+        # print(self.new_visco.to_numpy())
 
     def show(self):
         self.canvas.scene(self.scene)
@@ -612,7 +673,22 @@ class MpmSim:
                     self.Jp[p] *= sig[d, d] / new_sig
                     sig[d, d] = new_sig
                     J *= new_sig
-                stress, new_F = self.material.compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt)
+
+                # # debug
+                # D = (self.C[p] + self.C[p].transpose()) / 2.0
+                # shear_rate = ti.sqrt(2.0 * (D[0, 1] ** 2 + D[0, 2] ** 2 + D[1, 2] ** 2))
+                # viscosity_inf = 1
+                # viscosity_0 = 1e-5
+                # K = 1e1  # 时间常数的倒数
+                # m = 1  # 控制剪切变稀强度的参数
+                # self.new_visco[p] = viscosity_inf + (viscosity_0 - viscosity_inf) / (1.0 + ti.pow(K * shear_rate, m))
+
+                # self.x_body_id[p]
+                stress, new_F = self.materials[0].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
+                for i in ti.static(range(len(self.materials))):
+                    if i == self.x_body_id[p]:
+                        stress, new_F = self.materials[i].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
+                
                 self.F[p] = new_F
                 stress = (-self.dt * self.p_vol * 4 * self.inv_dx ** 2) * stress
                 affine = stress + self.p_mass * self.C[p]
@@ -766,7 +842,8 @@ class MpmSim:
         elif isinstance(body, SoftBody):
             self.deformable_bodies.append(body)
             self.n_soft_pars += body.n_pars
-            self.material = body.material
+            self.body_pars.append(body.n_pars)
+            self.materials.append(body.material)
         else:
             raise NotImplementedError()
         
@@ -847,4 +924,3 @@ def test_mpm():
 
 if __name__ == '__main__':
     test_mpm()
-    # test_lag_mpm()
