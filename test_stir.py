@@ -24,9 +24,9 @@ def test_sim():
     stir_folder = './data/stir/'
     cut_folder = './data/cut/cut0001/'
     equilibrated_material = StVK_with_Hecky_strain(3, 0.15, True)
-    non_equilibrated_material = visco_StVK_with_Hecky_strain(3, 0.15, 1e-4, 1e-4, False)
+    non_equilibrated_material = visco_StVK_with_Hecky_strain(3, 0.15, 1e-3, 1e-3, False)
 
-    fluid_par = np.random.rand(30000, 3) * 0.15
+    fluid_par = np.random.rand(15000, 3) * 0.15
     fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])
     non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material)
     equilibrated_fluid = SoftBody(fluid_par, equilibrated_material)
@@ -71,35 +71,38 @@ def test_sim():
 
     print("start simulation...")
     print("({} static and {} dynamic boundary)".format(sim.n_static_bounds, sim.n_dynamic_bounds))
+
     frame = 0
     x, y, z = 0, 0, 0
     down = True
-    stir_right = True
+    move_to_right_limit = True 
     stir_limit = 0.07
+    circle_radius = stir_limit
+    angle = 0
+    angle_step = 0.001 
+
     while not sim.window.is_pressed(ti.GUI.ESCAPE):
         for s in range(substeps):
-            # 下降逻辑
             if down and y <= -0.15:
-                down = False  
+                down = False
             if down:
                 y -= 0.00005
-            else:  # 搅拌逻辑
-                if stir_right and x >= stir_limit: 
-                    stir_right = False 
-                elif not stir_right and x <= -stir_limit:  
-                    stir_right = True 
-                if stir_right:
-                    x += 0.00005 
+            elif move_to_right_limit:
+                if x >= stir_limit:
+                    move_to_right_limit = False
+                    circle_center_x = 0
+                    circle_center_z = 0
                 else:
-                    x -= 0.00005 
+                    x += 0.00005
+            else:
+                x = circle_radius * np.cos(angle) + circle_center_x
+                z = circle_radius * np.sin(angle) + circle_center_z
+                angle += angle_step
             shovel.set_target(np.array([x, y, z]), np.array([1, 0, 0, 0]))
             sim.substep()
             sim.toward_target(substeps=1)
         sim.update_scene()
         sim.show()
-        # export_mesh = trimesh.Trimesh(
-        #     sim.x_soft.to_numpy(), np.asarray(dumpling_mesh.faces))
-        # export_mesh.export(f'./out/cut/{frame}.obj')
         frame += 1
 
 if __name__ == "__main__":
