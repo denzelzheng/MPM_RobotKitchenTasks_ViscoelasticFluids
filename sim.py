@@ -587,7 +587,7 @@ class MpmSim:
             for b in self.dynamic_bounds:
                 self.scene.mesh(b.vertices, b.faces, color=(0.25, 0.25, 0.25))
         if self.n_lag_verts:
-            self.scene.mesh(self.x_lag, self.tris_lag_expanded, color=(0.5, 0.1, 0.3))
+            self.scene.mesh(self.x_lag, self.tris_lag_expanded, color=(0.15, 0.15, 0.3))
 
     def show(self):
         self.canvas.scene(self.scene)

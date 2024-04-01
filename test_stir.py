@@ -17,16 +17,17 @@ from sim import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain
 def test_sim():
     ti.init(arch=ti.cuda)
     dt = 1e-4
+
     substeps = 5
 
 
     stir_folder = './data/stir/'
     cut_folder = './data/cut/cut0001/'
     equilibrated_material = StVK_with_Hecky_strain(3, 0.15, True)
-    non_equilibrated_material = visco_StVK_with_Hecky_strain(3, 0.15, 1e-3, 1e-3, False)
+    non_equilibrated_material = visco_StVK_with_Hecky_strain(3, 0.15, 1e-4, 1e-4, False)
 
-    fluid_par = np.random.rand(10000, 3) * 0.15
-    fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, 0.05, 0.0])
+    fluid_par = np.random.rand(30000, 3) * 0.15
+    fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])
     non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material)
     equilibrated_fluid = SoftBody(fluid_par, equilibrated_material)
 
@@ -35,8 +36,15 @@ def test_sim():
     chopping_board = StaticBoundary(mesh=chopping_board_mesh)
 
     basin_mesh = trimesh.load_mesh(pjoin(stir_folder, 'basin_remesh1.obj'))
-    basin_mesh.vertices += np.array([0.5, 0.45, 0.5]) - basin_mesh.vertices.mean(axis=0)
+    basin_mesh.vertices += -basin_mesh.vertices.mean(axis=0)
+    basin_mesh.vertices += np.array([0.5, 0.45, 0.5])
     basin = DynamicBoundary(mesh=basin_mesh)
+
+    basin_mesh_lag = trimesh.load_mesh(pjoin(stir_folder, 'basin_remesh1.obj'))
+    basin_mesh_lag.vertices = basin_mesh.vertices - basin_mesh.vertices.mean(axis=0)
+    # basin_mesh_lag.vertices *= 0.5
+    basin_mesh_lag.vertices += np.array([0.0, -0.05, 0.0])
+
     
     shovel_mesh = trimesh.load_mesh(pjoin(stir_folder, 'shovel_remesh3.obj'))
     # for m in shovel_mesh.geometry.values():
@@ -50,11 +58,13 @@ def test_sim():
     # shovel = StaticBoundary(mesh=shovel_mesh)
 
     sim = MpmSim(origin=np.asarray([-0.5,] * 3), dt=dt, ground_friction=0, box_bound_rel=0.1)
-    sim.set_camera_pos(0.5, 1.15, 1.5)
+    # sim.set_camera_pos(0.5, 0.8, 0.8)
+    sim.set_camera_pos(0.5, 1.3, 1.5)
     sim.camera_lookat(0.5, 0.5, 0.5)
     sim.add_boundary(chopping_board)
     sim.add_boundary(shovel)
-    sim.add_boundary(basin)
+    # sim.add_boundary(basin)
+    sim.add_lag_body(basin_mesh_lag, 1.5e3, 0.1)
     sim.add_body(non_equilibrated_fluid)
     sim.add_body(equilibrated_fluid)
     sim.init_system()
@@ -69,7 +79,7 @@ def test_sim():
     while not sim.window.is_pressed(ti.GUI.ESCAPE):
         for s in range(substeps):
             # 下降逻辑
-            if down and y <= -0.16:
+            if down and y <= -0.15:
                 down = False  
             if down:
                 y -= 0.00005
