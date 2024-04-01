@@ -12,8 +12,7 @@ from vedo import show
 from scipy.spatial.transform import Rotation as R
 from utils import trimesh_show, fix_unity_urdf_tf, read_tet, \
     interpolate_from_mesh
-from sim import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain, \
-    visco_fluid_StVK_with_Hecky_strain
+from sim import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain
 
 def test_sim():
     ti.init(arch=ti.cuda)
@@ -21,12 +20,13 @@ def test_sim():
     substeps = 5
 
     cut_folder = './data/cut/cut0001/'
-    material = visco_StVK_with_Hecky_strain(5e3, 0.1, 1e-3, 1e-3)
-    # material = visco_fluid_StVK_with_Hecky_strain(1e3, 0.1, 1e-2, 1e-2)
+    equilibrated_material = StVK_with_Hecky_strain(1e3, 0.15)
+    non_equilibrated_material = visco_StVK_with_Hecky_strain(1e3, 0.15, 0.3, 0.3)
     dumpling_mesh = trimesh.load_mesh(pjoin(cut_folder, 'dumpling1.obj'))
     dumpling_points = dumpling_mesh.sample(8192)
     dumpling_points += np.array([0, -0.1, 0])
-    dumpling = SoftBody(dumpling_points, material)
+    dumpling = SoftBody(dumpling_points, equilibrated_material)
+    dumpling_visco = SoftBody(dumpling_points, non_equilibrated_material)
     # print(dumpling_points.mean(axis=0))
 
     chopping_board_mesh = trimesh.load_mesh(pjoin(cut_folder, 'chopping_board.obj'))
@@ -46,6 +46,7 @@ def test_sim():
     sim.add_boundary(chopping_board)
     sim.add_boundary(knife)
     sim.add_body(dumpling)
+    sim.add_body(dumpling_visco)
     sim.init_system()
 
     print("start simulation...")

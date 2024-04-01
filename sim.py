@@ -39,13 +39,16 @@ class Material:
 
 
 class NeoHookean(Material):
-    def __init__(self, E: float = 5e3, nu: float = 0.2) -> None:
+    def __init__(self, E: float = 5e3, nu: float = 0.2, fluid: bool = False) -> None:
         super().__init__()
         self.mu, self.lam = E / (2 * (1 + nu)), E * \
             nu / ((1+nu) * (1 - 2 * nu))
+        self.fluid = fluid
         
     @ti.func
     def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
+        if self.fluid:
+            F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
         kirchhoff_stress = 2 * self.mu * (F - U @ V.transpose()) @ \
                     F.transpose() + ti.Matrix.identity(float, 3) * \
                     self.lam * J * (J - 1)
@@ -54,66 +57,35 @@ class NeoHookean(Material):
 
 
 class StVK_with_Hecky_strain(Material):
-    def __init__(self, E: float = 5e3, nu: float = 0.2) -> None:
+    def __init__(self, E: float = 5e3, nu: float = 0.2, fluid: bool = False) -> None:
         super().__init__()
         self.mu, self.lam = E / (2 * (1 + nu)), E * \
             nu / ((1+nu) * (1 - 2 * nu))
+        self.fluid = fluid
     
     @ti.func
     def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
         P_hat = compute_P_hat(sig, self.mu, self.lam)
         P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
+        if self.fluid:
+            F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
         kirchhoff_stress = P @ F.transpose()
         return kirchhoff_stress, F
 
 
 
+
 class visco_StVK_with_Hecky_strain(Material):
-    def __init__(self, E: float = 5e3, nu: float = 0.2, viscosity_v: float = 1, viscosity_d: float = 1) -> None:
+    def __init__(self, E: float = 5e3, nu: float = 0.2, viscosity_v: float = 1, viscosity_d: float = 1, fluid: bool = False) -> None:
         super().__init__()
         self.mu, self.lam = E / (2 * (1 + nu)), E * \
             nu / ((1+nu) * (1 - 2 * nu))
         self.viscosity_v = viscosity_v
         self.viscosity_d = viscosity_d
+        self.fluid = fluid
     
     @ti.func
     def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
-        P_hat = compute_P_hat(sig, self.mu, self.lam)
-        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
-        kirchhoff_stress = P @ F.transpose()
-
-        epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
-        alpha = 2.0 * self.mu / self.viscosity_d
-        beta = 2.0 * (2.0 * self.mu + self.lam * 3) / (9.0 * self.viscosity_v) - 2.0 * self.mu / (self.viscosity_d * 3)
-        A = 1 / (1 + dt * alpha)
-        B = dt * beta / (1 + dt * (alpha + 3 * beta))
-        epsilon_trace = ti.log(sig[0, 0]) + ti.log(sig[1, 1]) + ti.log(sig[2, 2])
-        temp_epsilon = A * (epsilon - ti.Vector([B * epsilon_trace, B * epsilon_trace, B * epsilon_trace]) )  
-        d = ti.exp(temp_epsilon)
-        new_sig = ti.Matrix([[d[0], 0.0, 0.0], [0.0, d[1], 0.0], [0.0, 0.0, d[2]]])
-        new_F = U @ new_sig @ V.transpose()
-        P_hat = compute_P_hat(new_sig, self.mu, self.lam)
-        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
-        kirchhoff_stress_visco = P @ new_F.transpose()
-        return (kirchhoff_stress_visco + kirchhoff_stress) / 2, new_F
-
-
-
-
-class visco_fluid_StVK_with_Hecky_strain(Material):
-    def __init__(self, E: float = 5e3, nu: float = 0.2, viscosity_v: float = 1, viscosity_d: float = 1) -> None:
-        super().__init__()
-        self.mu, self.lam = E / (2 * (1 + nu)), E * \
-            nu / ((1+nu) * (1 - 2 * nu))
-        self.viscosity_v = viscosity_v
-        self.viscosity_d = viscosity_d
-    
-    @ti.func
-    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt):
-        P_hat = compute_P_hat(sig, self.mu, self.lam)
-        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
-        F = ti.Matrix.identity(T, 3) * ti.sqrt(J)
-        kirchhoff_stress = P @ F.transpose()
 
         epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
         alpha = 2.0 * self.mu / self.viscosity_d
@@ -128,10 +100,11 @@ class visco_fluid_StVK_with_Hecky_strain(Material):
         P_hat = compute_P_hat(new_sig, self.mu, self.lam)
         P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
         new_J = new_F.determinant()
-        new_F = ti.Matrix.identity(T, 3) * ti.sqrt(new_J)
+        if self.fluid:
+            new_F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
         kirchhoff_stress_visco = P @ new_F.transpose()
         
-        return (kirchhoff_stress_visco + kirchhoff_stress) / 2, new_F
+        return kirchhoff_stress_visco, new_F
 
 
 class Boundary:
@@ -612,7 +585,7 @@ class MpmSim:
                 self.scene.mesh(b.vertices, b.faces, color=(0.5, 0.5, 0.5))
         if self.n_dynamic_bounds:
             for b in self.dynamic_bounds:
-                self.scene.mesh(b.vertices, b.faces, color=(0.7, 0.7, 0.7))
+                self.scene.mesh(b.vertices, b.faces, color=(0.25, 0.25, 0.25))
         if self.n_lag_verts:
             self.scene.mesh(self.x_lag, self.tris_lag_expanded, color=(0.5, 0.1, 0.3))
 

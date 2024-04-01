@@ -12,8 +12,7 @@ from vedo import show
 from scipy.spatial.transform import Rotation as R
 from utils import trimesh_show, fix_unity_urdf_tf, read_tet, \
     interpolate_from_mesh, rotate_mesh
-from sim import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain, \
-    visco_fluid_StVK_with_Hecky_strain
+from sim import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain
 
 def test_sim():
     ti.init(arch=ti.cuda)
@@ -23,12 +22,13 @@ def test_sim():
 
     stir_folder = './data/stir/'
     cut_folder = './data/cut/cut0001/'
-    material = visco_StVK_with_Hecky_strain(6e3, 0.1, 1e-2, 1e-2)
-    material = visco_fluid_StVK_with_Hecky_strain(4e3, 0.1, 0.5, 0.5)
+    equilibrated_material = StVK_with_Hecky_strain(3, 0.15, True)
+    non_equilibrated_material = visco_StVK_with_Hecky_strain(3, 0.15, 1e-3, 1e-3, False)
 
-    fluid_par = np.random.rand(45000, 3) * 0.15
-    fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, 0.1, 0.0])
-    fluid = SoftBody(fluid_par, material)
+    fluid_par = np.random.rand(10000, 3) * 0.15
+    fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, 0.05, 0.0])
+    non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material)
+    equilibrated_fluid = SoftBody(fluid_par, equilibrated_material)
 
     chopping_board_mesh = trimesh.load_mesh(pjoin(cut_folder, 'chopping_board.obj'))
     chopping_board_mesh.vertices += np.array([0.5, 0.4, 0.5])
@@ -52,11 +52,11 @@ def test_sim():
     sim = MpmSim(origin=np.asarray([-0.5,] * 3), dt=dt, ground_friction=0, box_bound_rel=0.1)
     sim.set_camera_pos(0.5, 1.15, 1.5)
     sim.camera_lookat(0.5, 0.5, 0.5)
-    # sim.set_camera_pos(0.75, 1, 0.3)
     sim.add_boundary(chopping_board)
     sim.add_boundary(shovel)
     sim.add_boundary(basin)
-    sim.add_body(fluid)
+    sim.add_body(non_equilibrated_fluid)
+    sim.add_body(equilibrated_fluid)
     sim.init_system()
 
     print("start simulation...")
