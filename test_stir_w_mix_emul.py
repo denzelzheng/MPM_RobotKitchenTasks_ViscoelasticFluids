@@ -31,14 +31,14 @@ def test_sim():
     fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])
     fluid_par1 = np.random.rand(15000, 3) * 0.15
     fluid_par1 = fluid_par1 - fluid_par1.mean(axis=0) + np.array([0.0, -0.01, 0.0])
-    non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material, np.array([0.85, 0.65, 0.1]), 1, 1, 0)
-    equilibrated_fluid = SoftBody(fluid_par1, equilibrated_material, np.array([0.85, 0.65, 0.1]), 0, 1, 0)
+    non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material, np.array([0.85, 0.65, 0.1]), 1, 0, 0.9)
+    equilibrated_fluid = SoftBody(fluid_par1, equilibrated_material, np.array([0.85, 0.65, 0.1]), 1, 0, 0.9)
 
     fluid_par2 = np.random.rand(5000, 3) * 0.05
     fluid_par2 = fluid_par2 - fluid_par2.mean(axis=0) + np.array([0.0, 0.1, 0.0])
     yolk_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 0.1, 0.1, 1, 1)
-    yolk = SoftBody(rest_pars_pos=fluid_par2, material=yolk_material, color=np.array([1.0, 0.3, 0.0]), phase_weight=1, 
-                     emulsification_efficiency = 0, emulsifier_capacity = 1)
+    yolk = SoftBody(rest_pars_pos=fluid_par2, material=yolk_material, color=np.array([1.0, 0.3, 0.0]),  
+                     emulsification_efficiency = 0, emulsifier_capacity = 1, density=1)
 
 
     chopping_board_mesh = trimesh.load_mesh(pjoin(cut_folder, 'chopping_board.obj'))
