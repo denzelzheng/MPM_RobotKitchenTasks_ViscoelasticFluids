@@ -326,10 +326,11 @@ class Body:
 
 
 class SoftBody(Body):
-    def __init__(self, rest_pars_pos: np.ndarray, material: Material, color: np.ndarray) -> None:
+    def __init__(self, rest_pars_pos: np.ndarray, material: Material, color: np.ndarray, phase_weight: float) -> None:
         self.rest_pos: np.ndarray = rest_pars_pos
         self.material: Material = material
         self.color: np.ndarray = color
+        self.phase_weight: float = phase_weight
 
     @property
     def n_pars(self):
@@ -427,6 +428,7 @@ class MpmSim:
         self.materials = []
         self.body_pars = []
         self.body_colors = []
+        self.body_phase_weights = []
 
         # fileds
         self.x: Optional[vecs] = None
@@ -435,10 +437,14 @@ class MpmSim:
         self.v: Optional[vecs] = None
         self.C: Optional[mats] = None
         self.F: Optional[mats] = None
-        # TODO: material
+        self.p_c: Optional[vecs] = None     # phase_counts for phase_concentrations
+        self.p_w: Optional[scalars] = None   # phase_weight
         self.Jp: Optional[scalars] = None
         self.grid_v: Optional[vecs] = None
         self.grid_m: Optional[scalars] = None
+        self.grid_p_c: Optional[scalars] = None
+        self.grid_c: Optional[vecs] = None    # grid_color
+
 
 
         self.n_soft_pars: int = 0
@@ -482,15 +488,18 @@ class MpmSim:
             self.tris_lag.from_numpy(np.asarray(self.lag_mesh.faces))
 
 
-        if self.n_soft_pars:    
+        if self.n_soft_pars:
+            self.n_phases = len(self.deformable_bodies)    
             self.x = vecs(3, T, self.n_soft_pars)
             self.x_color = vecs(3, T, self.n_soft_pars)
+            self.p_c = vecs(self.n_phases, T, self.n_soft_pars)
             self.v = vecs(3, T, self.n_soft_pars)
             self.C = mats(3, 3, T, self.n_soft_pars)
             self.F = mats(3, 3, T, self.n_soft_pars)
-            # TODO: material
+
             self.x_body_id = scalars(ti.i32, self.n_soft_pars)
             self.Jp = scalars(T, self.n_soft_pars)
+            self.p_w = scalars(T, self.n_soft_pars)
             np_x = np.concatenate(
                 [b.rest_pos for b in self.deformable_bodies], axis=0) 
             self.x.from_numpy(np_x - self.origin)
@@ -501,11 +510,17 @@ class MpmSim:
             # colors = np.random.rand(self.n_soft_pars, 3)
             # self.x_color.from_numpy(np.array(colors))
 
+            np_phase_weight = np.concatenate([np.tile(phase_weight, (pars, )) 
+                                              for phase_weight, pars in zip(self.body_phase_weights, self.body_pars)])
+            self.p_w.from_numpy(np.array(np_phase_weight))
+
             np_colors = np.concatenate([np.tile(color, (pars, 1)) for color, pars in zip(self.body_colors, self.body_pars)])
             self.x_color.from_numpy(np.array(np_colors))
 
         self.grid_v = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
+        self.grid_c = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
         self.grid_m = scalars(T, (self.n_grids, self.n_grids, self.n_grids))
+        self.grid_p_c = vecs(n=self.n_phases, dtype=T, shape=(self.n_grids, self.n_grids, self.n_grids))
   
         if self.n_rigid_pars:      
             self.x_rp = vecs(3, T, self.n_rigid_pars)
@@ -620,7 +635,10 @@ class MpmSim:
     def init_step(self):
         for i, j, k in self.grid_m:
             self.grid_v[i, j, k] = [0, 0, 0]
+            self.grid_c[i, j, k] = [0, 0, 0]
             self.grid_m[i, j, k] = 0
+            for l in ti.static(range(self.n_phases)):
+                self.grid_p_c[i, j, k][l] = 0
 
     def update_scene(self):
         self.scene.set_camera(self.camera)
@@ -644,6 +662,7 @@ class MpmSim:
                 self.scene.mesh(b.vertices, b.faces, color=(0.25, 0.25, 0.25))
         if self.n_lag_verts:
             self.scene.mesh(self.x_lag, self.tris_lag_expanded, color=(0.15, 0.15, 0.3))
+
 
     def show(self):
         self.canvas.scene(self.scene)
@@ -669,22 +688,29 @@ class MpmSim:
                     sig[d, d] = new_sig
                     J *= new_sig
 
+                particle_phase = ti.Vector.zero(T, self.n_phases)
                 stress, new_F = self.materials[0].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
                 for i in ti.static(range(len(self.materials))):
                     if i == self.x_body_id[p]:
                         stress, new_F = self.materials[i].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
-                
+                        particle_phase[i] = 1
+
                 self.F[p] = new_F
                 stress = (-self.dt * self.p_vol * 4 * self.inv_dx ** 2) * stress
                 affine = stress + self.p_mass * self.C[p]
                 for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
                     # Loop over 3x3 grid node neighborhood
                     offset = ti.Vector([i, j, k])
+                    position = base + offset
                     dpos = (offset.cast(float) - fx) * self.dx
                     weight = w[i][0] * w[j][1] * w[k][2]
-                    self.grid_v[base + offset] += weight * \
+                    self.grid_v[position] += weight * \
                         (self.p_mass * self.v[p] + affine @ dpos)
-                    self.grid_m[base + offset] += weight * self.p_mass
+                    self.grid_m[position] += weight * self.p_mass
+                    self.grid_p_c[position] += particle_phase
+                    self.grid_c[position] += self.x_color[p]
+
+
         if ti.static(self.n_lag_verts):
             for p in self.x_lag:
                 base = ti.cast(self.x_lag[p] * self.inv_dx - 0.5, ti.i32)
@@ -696,12 +722,13 @@ class MpmSim:
                     offset = ti.Vector([i, j, k])
                     dpos = (offset.cast(float) - fx) * \
                         self.dx
+                    position = base + offset
                     weight = w[i][0] * w[j][1] * w[k][2]
                     if not ti.math.isnan(self.x_lag.grad[p]).sum():
-                        self.grid_v[base + offset] += weight * (
+                        self.grid_v[position] += weight * (
                             self.rp_mass * self.v_lag[p] - 
                             self.dt * self.x_lag.grad[p] + affine @ dpos)
-                        self.grid_m[base + offset] += weight * self.rp_mass
+                        self.grid_m[position] += weight * self.rp_mass
 
     @ti.kernel
     def grid_op(self):
@@ -760,13 +787,21 @@ class MpmSim:
                     ** 2, 0.5 * (fx - 0.5) ** 2]
                 new_v = ti.Vector.zero(float, 3)
                 new_C = ti.Matrix.zero(float, 3, 3)
+                new_p_c = ti.Vector.zero(float, self.n_phases)
+                new_c = ti.Vector.zero(float, 3)
                 for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
                     # loop over 3x3 grid node neighborhood
                     dpos = ti.Vector([i, j, k]).cast(float) - fx
-                    g_v = self.grid_v[base + ti.Vector([i, j, k])]
+                    position = base + ti.Vector([i, j, k])
+                    g_v = self.grid_v[position]
+                    g_p_c = self.grid_p_c[position]
+                    g_c = self.grid_c[position]
+                    # todo: collect local_c_p
                     weight = w[i][0] * w[j][1] * w[k][2]
                     new_v += weight * g_v
                     new_C += 4 * self.inv_dx * weight * g_v.outer_product(dpos)
+                    new_p_c += g_p_c
+                    new_c += g_c
 
                 # collide with dynamics
                 if ti.static(self.n_dynamic_bounds > 0):
@@ -775,6 +810,13 @@ class MpmSim:
                             new_x_tmp = self.x[p] + self.dt * new_v
                             new_v = self.dynamic_bounds[i].collide(new_x_tmp, new_v, self.dt, self.p_mass)
 
+                sum_p_c = 0
+                for l in ti.static(range(self.n_phases)):
+                    sum_p_c += new_p_c[l] 
+                new_c = new_c / sum_p_c
+                alpha = self.dt     
+                self.p_c[p] = new_p_c  
+                self.x_color[p] = self.x_color[p] + alpha * (new_c - self.x_color[p])
                 self.v[p], self.C[p] = new_v, new_C
                 self.x[p] += self.dt * self.v[p]  # advection
 
@@ -830,6 +872,7 @@ class MpmSim:
             self.body_pars.append(body.n_pars)
             self.materials.append(body.material)
             self.body_colors.append(body.color)
+            self.body_phase_weights.append(body.phase_weight)
         else:
             raise NotImplementedError()
         

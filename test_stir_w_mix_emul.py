@@ -4,7 +4,7 @@ from config import mano_urdf_path, points_data_path
 import numpy as np
 import trimesh
 from os.path import join as pjoin
-from sim import StaticBoundary, DynamicBoundary, RigidBody, SoftBody, MpmSim
+from sim_w_mix_and_emul import StaticBoundary, DynamicBoundary, RigidBody, SoftBody, MpmSim
 from icecream import ic
 from models import ManoHand, ManoHandSensors
 import json
@@ -12,7 +12,7 @@ from vedo import show
 from scipy.spatial.transform import Rotation as R
 from utils import trimesh_show, fix_unity_urdf_tf, read_tet, \
     interpolate_from_mesh, rotate_mesh
-from sim import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain, \
+from sim_w_mix_and_emul import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain, \
     cross_visco_StVK_with_Hecky_strain
 
 
@@ -31,13 +31,13 @@ def test_sim():
     fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])
     fluid_par1 = np.random.rand(15000, 3) * 0.15
     fluid_par1 = fluid_par1 - fluid_par1.mean(axis=0) + np.array([0.0, -0.01, 0.0])
-    non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material, np.array([0.85, 0.65, 0.1]))
-    equilibrated_fluid = SoftBody(fluid_par1, equilibrated_material, np.array([0.85, 0.65, 0.1]))
+    non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material, np.array([0.85, 0.65, 0.1]), 1)
+    equilibrated_fluid = SoftBody(fluid_par1, equilibrated_material, np.array([0.85, 0.65, 0.1]), 1)
 
     fluid_par2 = np.random.rand(5000, 3) * 0.05
     fluid_par2 = fluid_par2 - fluid_par2.mean(axis=0) + np.array([0.0, 0.1, 0.0])
     sauce_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 0.1, 0.1, 1, 1)
-    sauce = SoftBody(fluid_par2, sauce_material, np.array([0.23, 0.17, 0.1]))
+    sauce = SoftBody(rest_pars_pos=fluid_par2, material=sauce_material, color=np.array([0.23, 0.17, 0.1]), phase_weight=1)
 
 
     chopping_board_mesh = trimesh.load_mesh(pjoin(cut_folder, 'chopping_board.obj'))

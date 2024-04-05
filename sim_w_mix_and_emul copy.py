@@ -435,10 +435,11 @@ class MpmSim:
         self.v: Optional[vecs] = None
         self.C: Optional[mats] = None
         self.F: Optional[mats] = None
-        # TODO: material
+        self.p_c: Optional[vecs] = None
         self.Jp: Optional[scalars] = None
         self.grid_v: Optional[vecs] = None
         self.grid_m: Optional[scalars] = None
+        self.grid_p_c: Optional[scalars] = None
 
 
         self.n_soft_pars: int = 0
@@ -482,9 +483,11 @@ class MpmSim:
             self.tris_lag.from_numpy(np.asarray(self.lag_mesh.faces))
 
 
-        if self.n_soft_pars:    
+        if self.n_soft_pars:
+            self.n_phases = len(self.deformable_bodies)    
             self.x = vecs(3, T, self.n_soft_pars)
             self.x_color = vecs(3, T, self.n_soft_pars)
+            self.p_c = vecs(self.n_phases, T, self.n_soft_pars)
             self.v = vecs(3, T, self.n_soft_pars)
             self.C = mats(3, 3, T, self.n_soft_pars)
             self.F = mats(3, 3, T, self.n_soft_pars)
@@ -506,6 +509,7 @@ class MpmSim:
 
         self.grid_v = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
         self.grid_m = scalars(T, (self.n_grids, self.n_grids, self.n_grids))
+        self.grid_p_c = scalars(dtype=T, shape=(self.n_grids, self.n_grids, self.n_grids, self.n_phases))
   
         if self.n_rigid_pars:      
             self.x_rp = vecs(3, T, self.n_rigid_pars)
@@ -621,6 +625,8 @@ class MpmSim:
         for i, j, k in self.grid_m:
             self.grid_v[i, j, k] = [0, 0, 0]
             self.grid_m[i, j, k] = 0
+            for l in ti.static(range(self.n_phases)):
+                self.grid_p_c[i, j, k, l] = 0
 
     def update_scene(self):
         self.scene.set_camera(self.camera)
@@ -669,22 +675,35 @@ class MpmSim:
                     sig[d, d] = new_sig
                     J *= new_sig
 
-                stress, new_F = self.materials[0].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
+                phase = ti.static(0)
                 for i in ti.static(range(len(self.materials))):
                     if i == self.x_body_id[p]:
-                        stress, new_F = self.materials[i].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
-                
+                        phase = ti.static(i)
+
+                stress, new_F = self.materials[phase].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
+
+
+                # todo, C for per phase. And should C * weight?
+                C_phase = 1
+
+
                 self.F[p] = new_F
                 stress = (-self.dt * self.p_vol * 4 * self.inv_dx ** 2) * stress
                 affine = stress + self.p_mass * self.C[p]
                 for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
                     # Loop over 3x3 grid node neighborhood
                     offset = ti.Vector([i, j, k])
+                    position = base + offset
+                    position_with_phase_id = \
+                        ti.Vector([position[0], position[1], position[2], phase])
                     dpos = (offset.cast(float) - fx) * self.dx
                     weight = w[i][0] * w[j][1] * w[k][2]
-                    self.grid_v[base + offset] += weight * \
+                    self.grid_v[position] += weight * \
                         (self.p_mass * self.v[p] + affine @ dpos)
-                    self.grid_m[base + offset] += weight * self.p_mass
+                    self.grid_m[position] += weight * self.p_mass
+                    self.grid_p_c[position_with_phase_id] += weight * C_phase
+
+
         if ti.static(self.n_lag_verts):
             for p in self.x_lag:
                 base = ti.cast(self.x_lag[p] * self.inv_dx - 0.5, ti.i32)
@@ -696,12 +715,13 @@ class MpmSim:
                     offset = ti.Vector([i, j, k])
                     dpos = (offset.cast(float) - fx) * \
                         self.dx
+                    position = base + offset
                     weight = w[i][0] * w[j][1] * w[k][2]
                     if not ti.math.isnan(self.x_lag.grad[p]).sum():
-                        self.grid_v[base + offset] += weight * (
+                        self.grid_v[position] += weight * (
                             self.rp_mass * self.v_lag[p] - 
                             self.dt * self.x_lag.grad[p] + affine @ dpos)
-                        self.grid_m[base + offset] += weight * self.rp_mass
+                        self.grid_m[position] += weight * self.rp_mass
 
     @ti.kernel
     def grid_op(self):
@@ -763,7 +783,9 @@ class MpmSim:
                 for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
                     # loop over 3x3 grid node neighborhood
                     dpos = ti.Vector([i, j, k]).cast(float) - fx
-                    g_v = self.grid_v[base + ti.Vector([i, j, k])]
+                    position = base + ti.Vector([i, j, k])
+                    g_v = self.grid_v[position]
+                    # todo: collect local_c_p
                     weight = w[i][0] * w[j][1] * w[k][2]
                     new_v += weight * g_v
                     new_C += 4 * self.inv_dx * weight * g_v.outer_product(dpos)
