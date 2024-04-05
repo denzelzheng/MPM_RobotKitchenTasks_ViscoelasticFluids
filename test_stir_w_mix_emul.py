@@ -31,13 +31,14 @@ def test_sim():
     fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])
     fluid_par1 = np.random.rand(15000, 3) * 0.15
     fluid_par1 = fluid_par1 - fluid_par1.mean(axis=0) + np.array([0.0, -0.01, 0.0])
-    non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material, np.array([0.85, 0.65, 0.1]), 1)
-    equilibrated_fluid = SoftBody(fluid_par1, equilibrated_material, np.array([0.85, 0.65, 0.1]), 1)
+    non_equilibrated_fluid = SoftBody(fluid_par, non_equilibrated_material, np.array([0.85, 0.65, 0.1]), 1, 1, 0)
+    equilibrated_fluid = SoftBody(fluid_par1, equilibrated_material, np.array([0.85, 0.65, 0.1]), 0, 1, 0)
 
     fluid_par2 = np.random.rand(5000, 3) * 0.05
     fluid_par2 = fluid_par2 - fluid_par2.mean(axis=0) + np.array([0.0, 0.1, 0.0])
-    sauce_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 0.1, 0.1, 1, 1)
-    sauce = SoftBody(rest_pars_pos=fluid_par2, material=sauce_material, color=np.array([0.23, 0.17, 0.1]), phase_weight=1)
+    yolk_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 0.1, 0.1, 1, 1)
+    yolk = SoftBody(rest_pars_pos=fluid_par2, material=yolk_material, color=np.array([1.0, 0.3, 0.0]), phase_weight=1, 
+                     emulsification_efficiency = 0, emulsifier_capacity = 1)
 
 
     chopping_board_mesh = trimesh.load_mesh(pjoin(cut_folder, 'chopping_board.obj'))
@@ -73,10 +74,10 @@ def test_sim():
     sim.add_boundary(chopping_board)
     sim.add_boundary(shovel)
     # sim.add_boundary(basin)
-    sim.add_lag_body(basin_mesh_lag, 1.5e4, 0.1)
+    sim.add_lag_body(basin_mesh_lag, 5e4, 0.1)
     sim.add_body(non_equilibrated_fluid)
     sim.add_body(equilibrated_fluid)
-    sim.add_body(sauce)
+    sim.add_body(yolk)
     sim.init_system()
 
     print("start simulation...")
@@ -93,7 +94,7 @@ def test_sim():
 
     while not sim.window.is_pressed(ti.GUI.ESCAPE):
         for s in range(substeps):
-            if down and y <= -0.21:
+            if down and y <= -0.213:
                 down = False
             if down:
                 y -= 0.00005
