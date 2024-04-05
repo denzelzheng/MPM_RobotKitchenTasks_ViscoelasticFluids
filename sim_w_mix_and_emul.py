@@ -327,13 +327,13 @@ class Body:
 
 class SoftBody(Body):
     def __init__(self, rest_pars_pos: np.ndarray, material: Material, color: np.ndarray, 
-                 phase_weight: float, emulsification_efficiency: float, emulsifier_capacity: float,) -> None:
+                 emulsification_efficiency: float, emulsifier_capacity: float, density: float) -> None:
         self.rest_pos: np.ndarray = rest_pars_pos
         self.material: Material = material
         self.color: np.ndarray = color
-        self.phase_weight: float = phase_weight
         self.emulsification_efficiency: float = emulsification_efficiency
         self.emulsifier_capacity: float = emulsifier_capacity
+        self.rho: float = density
 
 
     @property
@@ -391,14 +391,10 @@ class MpmSim:
         self.reset()
 
         # TODO: align these parameters in the future
-        self.p_vol, self.p_rho = (self.dx * 0.5)**2, 1
-        self.p_mass = self.p_vol * self.p_rho
+        self.default_p_vol = (self.dx * 0.5)**2
         self.rp_rho = 1e2
-        self.rp_mass = self.p_vol * self.rp_rho
-
-        # E, nu = 5e3, 0.2
-        # self.mu, self.lam = E / (2 * (1 + nu)), E * \
-        #     nu / ((1 + nu) * (1 - 2 * nu))
+        self.rp_vol = self.default_p_vol
+        self.rp_mass = self.rp_vol * self.rp_rho
 
 
     @property
@@ -432,9 +428,9 @@ class MpmSim:
         self.materials = []
         self.body_pars = []
         self.body_colors = []
-        self.body_phase_weights = []
         self.body_emulsifier_capacities = []
         self.body_emulsification_efficiencies = []
+        self.body_rhos = []
 
         # fileds
         self.x: Optional[vecs] = None
@@ -442,10 +438,11 @@ class MpmSim:
         self.x_body_id: Optional[scalars] = None
         self.x_color: Optional[vecs] = None
         self.v: Optional[vecs] = None
+        self.p_rho: Optional[scalars] = None
+        self.p_vol: Optional[scalars] = None
         self.C: Optional[mats] = None
         self.F: Optional[mats] = None
         self.p_c: Optional[vecs] = None     # phase_counts for phase_concentrations
-        self.p_w: Optional[scalars] = None   # phase_weight
         self.e_c: Optional[scalars] = None   # emulsifier_capacity
         self.e_e: Optional[scalars] = None   # emulsification_efficiency
         self.Jp: Optional[scalars] = None
@@ -509,7 +506,8 @@ class MpmSim:
 
             self.x_body_id = scalars(ti.i32, self.n_soft_pars)
             self.Jp = scalars(T, self.n_soft_pars)
-            self.p_w = scalars(T, self.n_phases)
+            self.p_vol = scalars(T, self.n_soft_pars)
+            self.p_rho = scalars(T, self.n_soft_pars)
             self.e_c = scalars(T, self.n_phases)
             self.e_e = scalars(T, self.n_phases)
             np_x = np.concatenate(
@@ -518,18 +516,9 @@ class MpmSim:
 
             np_body_id = np.concatenate([np.full(pars, i) for i, pars in enumerate(self.body_pars)])
             self.x_body_id.from_numpy(np_body_id)
-
-            # colors = np.random.rand(self.n_soft_pars, 3)
-            # self.x_color.from_numpy(np.array(colors))
-
-            self.p_w.from_numpy(np.array(self.body_phase_weights))
             
             self.e_e.from_numpy(np.array(self.body_emulsification_efficiencies))
             self.e_c.from_numpy(np.array(self.body_emulsifier_capacities))
-
-            # np_e_c = np.concatenate([np.tile(e_cs, (pars, )) for e_cs, pars in zip(self.body_emulsifier_capacities, self.body_pars)])
-            # self.e_c.from_numpy(np.array(np_e_c))
-
 
 
             np_colors = np.concatenate([np.tile(color, (pars, 1)) for color, pars in zip(self.body_colors, self.body_pars)])
@@ -607,6 +596,8 @@ class MpmSim:
                 self.v[i] = ti.Vector.zero(T, 3)
                 self.F[i] = ti.Vector.identity(T, 3)
                 self.C[i] = ti.Matrix.zero(float, 3, 3)
+                self.p_rho[i] = 1.0
+                self.p_vol[i] = self.default_p_vol
         if ti.static(self.n_lag_verts):
             for i in ti.ndrange(self.n_lag_verts):
                 self.v_lag[i] = ti.Vector([0, 0, 0], T)
@@ -710,16 +701,23 @@ class MpmSim:
                     sig[d, d] = new_sig
                     J *= new_sig
 
+                
                 particle_phase = ti.Vector.zero(T, self.n_phases)
                 stress, new_F = self.materials[0].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
                 for i in ti.static(range(len(self.materials))):
                     if i == self.x_body_id[p]:
                         stress, new_F = self.materials[i].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
                         particle_phase[i] = 1
+                        self.p_rho[p] = self.body_rhos[i]
 
+                        # todo: better design for emulsion p_vol
+                        alpha = 0.1
+                        self.p_vol[p] = self.default_p_vol * (1 - (1 - alpha) * self.body_emulsification_efficiencies[i])
+
+                p_mass = self.p_rho[p] * self.p_vol[p]
                 self.F[p] = new_F
-                stress = (-self.dt * self.p_vol * 4 * self.inv_dx ** 2) * stress
-                affine = stress + self.p_mass * self.C[p]
+                stress = (-self.dt * self.p_vol[p] * 4 * self.inv_dx ** 2) * stress
+                affine = stress + p_mass * self.C[p]
                 for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
                     # Loop over 3x3 grid node neighborhood
                     offset = ti.Vector([i, j, k])
@@ -727,8 +725,8 @@ class MpmSim:
                     dpos = (offset.cast(float) - fx) * self.dx
                     weight = w[i][0] * w[j][1] * w[k][2]
                     self.grid_v[position] += weight * \
-                        (self.p_mass * self.v[p] + affine @ dpos)
-                    self.grid_m[position] += weight * self.p_mass
+                        (p_mass * self.v[p] + affine @ dpos)
+                    self.grid_m[position] += weight * p_mass
                     self.grid_p_c[position] += particle_phase
                     self.grid_c[position] += self.x_color[p]
 
@@ -771,7 +769,7 @@ class MpmSim:
                 if ti.static(self.n_dynamic_bounds > 0):
                     for i in ti.static(range(self.n_dynamic_bounds)):
                         if ti.static(self.dynamic_bounds[i].collide_type in ["grid", "both"]):
-                            # v = self.dynamic_bounds[i].collide(I * self.dx, v, self.dt, self.p_mass)
+                            # v = self.dynamic_bounds[i].collide(I * self.dx, v, self.dt, p_mass)
                             v = self.dynamic_bounds[i].collide(I * self.dx, v, self.dt, self.grid_m[I])
 
                 if ti.static(self.box_bound > 0):
@@ -826,19 +824,18 @@ class MpmSim:
                     new_c += g_c
 
                 # collide with dynamics
+
+                p_mass = self.p_vol[p] * self.p_rho[p]
                 if ti.static(self.n_dynamic_bounds > 0):
                     for i in ti.static(range(self.n_dynamic_bounds)):
                         if ti.static(self.dynamic_bounds[i].collide_type in ["particle", "both"]):
                             new_x_tmp = self.x[p] + self.dt * new_v
-                            new_v = self.dynamic_bounds[i].collide(new_x_tmp, new_v, self.dt, self.p_mass)
+                            new_v = self.dynamic_bounds[i].collide(new_x_tmp, new_v, self.dt, p_mass)
 
                 new_p_c_sum = 0
-                # sum_p_c_weighted = 0
                 alpha = 6e-1 
                 for q in ti.static(range(self.n_phases)):
                     new_p_c_sum += new_p_c[q]
-                    # new_p_c[q] *= (self.p_w[q] + 1e-6)
-                    # sum_p_c_weighted += new_p_c[q]
                 new_c = new_c / new_p_c_sum   
                 self.p_c[p] = new_p_c / new_p_c_sum 
                 self.x_color[p] = self.x_color[p] + alpha * self.dt * (new_c - self.x_color[p])
@@ -932,9 +929,9 @@ class MpmSim:
             self.body_pars.append(body.n_pars)
             self.materials.append(body.material)
             self.body_colors.append(body.color)
-            self.body_phase_weights.append(body.phase_weight)
             self.body_emulsification_efficiencies.append(body.emulsification_efficiency)
             self.body_emulsifier_capacities.append(body.emulsifier_capacity)
+            self.body_rhos.append(body.rho)
         else:
             raise NotImplementedError()
         
