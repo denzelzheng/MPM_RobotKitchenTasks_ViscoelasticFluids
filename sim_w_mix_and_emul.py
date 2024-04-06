@@ -26,20 +26,7 @@ def compute_P_hat(sig, mu, lam):
 
 @ti.func
 def compute_emulsion_viscosity(viscosity, emul, phi_w=0.5, phi_m=0.64, viscosity_intrinsic=2.5, lambda_decay=2):
-    """
-    Calculates the viscosity of oil as a function of emulsification degree.
 
-    Parameters:
-    - alpha: Emulsification degree, ranging from 0 (no emulsification) to 1 (full emulsification).
-    - eta_0: Initial viscosity of oil (Pa.s), default is 0.1.
-    - phi_w: Maximum volume fraction of water, default is 0.5.
-    - phi_m: Maximum packing volume fraction, default is 0.64.
-    - eta_intrinsic: Intrinsic viscosity, default is 2.5.
-    - lambda_decay: Decay coefficient for the interaction force between oil droplets, default is 2.
-
-    Returns:
-    - viscosity: Viscosity of oil (Pa.s) at the given emulsification degree.
-    """
     # Original fluid phase viscosity
     viscosity_o = (1 - phi_w * emul) * viscosity * ti.exp(-lambda_decay * emul)
     
@@ -495,6 +482,7 @@ class MpmSim:
         self.C: Optional[mats] = None
         self.F: Optional[mats] = None
         self.p_c: Optional[vecs] = None     # phase_counts for phase_concentrations
+        self.p_c_global: Optional[scalars] = None
         self.e_c: Optional[scalars] = None   # emulsifier_capacity
         self.e_e: Optional[scalars] = None   # emulsification_efficiency
         self.Jp: Optional[scalars] = None
@@ -550,11 +538,12 @@ class MpmSim:
 
 
         if self.n_soft_pars:   
-            self.n_phases = len(self.deformable_bodies) #########
+            self.n_phases = len(self.deformable_bodies)
             self.x = vecs(3, T, self.n_soft_pars)
             self.emul = scalars(T, self.n_soft_pars)
             self.x_color = vecs(3, T, self.n_soft_pars)
             self.p_c = vecs(self.n_phases, T, self.n_soft_pars)
+            self.p_c_global = vecs(self.n_phases, T, ())
             self.v = vecs(3, T, self.n_soft_pars)
             self.C = mats(3, 3, T, self.n_soft_pars)
             self.F = mats(3, 3, T, self.n_soft_pars)
@@ -722,6 +711,7 @@ class MpmSim:
         self.grid_op()
         self.G2P()
         self.emulsification_update()
+        self.compute_global_phase_concentration()
 
     @ti.kernel
     def init_step(self):
@@ -757,17 +747,17 @@ class MpmSim:
                 x_color_by_body_id[body_id] = np_x_color[mask]
                 p_vol_by_body_id[body_id] = np_p_vol[mask]
 
-                default_radius = 0.003
                 tmp_radius = (p_vol_by_body_id[body_id][0] / self.default_p_vol) ** (1/3) * default_radius
                 tmp_radius = float(round(tmp_radius, 3))
-                if tmp_radius < 0.002: # bug of ti.scene.particles()
+                if tmp_radius < 0.002: # bug of taichi ti.ui.Scene().particles()
                     tmp_radius = 0.002
                 self.body_x[body_id].from_numpy(np_x[mask])
                 self.body_x_color[body_id].from_numpy(np_x_color[mask])
                 self.scene.particles(self.body_x[body_id], per_vertex_color=self.body_x_color[body_id], radius=tmp_radius)
 
-                
+
             # print(self.p_c.to_numpy())
+            # print(self.p_c_global.to_numpy())
             # print(self.emul.to_numpy(), np.sum(self.emul.to_numpy(), axis=0))
             # print(self.e_c.to_numpy())
 
@@ -940,11 +930,20 @@ class MpmSim:
                             new_v = self.dynamic_bounds[i].collide(new_x_tmp, new_v, self.dt, p_mass)
 
                 new_p_c_sum = 0
-                alpha = 6e-1 
+                alpha = 1e-1 
                 for q in ti.static(range(self.n_phases)):
                     new_p_c_sum += new_p_c[q]
                 new_c = new_c / new_p_c_sum   
                 self.p_c[p] = new_p_c / new_p_c_sum 
+
+
+                p_c_L1_distance_criterion = 0.1  # assess phases mixing uniformity
+                delta_p_c = self.p_c[p] - self.p_c_global[None]
+                p_c_L1_distance = 0.0
+                for q in ti.static(range(self.n_phases)):
+                    p_c_L1_distance += ti.abs(delta_p_c[q])
+                if p_c_L1_distance < p_c_L1_distance_criterion:
+                    alpha *= 1e2
                 self.x_color[p] = self.x_color[p] + alpha * self.dt * (new_c - self.x_color[p])
                 self.v[p], self.C[p] = new_v, new_C
                 self.x[p] += self.dt * self.v[p]  # advection
@@ -996,9 +995,19 @@ class MpmSim:
                 
                 self.x_color[p] += (self.emul[p] - prev_emul) * (emulsion_color - self.x_color[p])
 
+    @ti.kernel
+    def compute_global_phase_concentration(self):
+        if ti.static(self.n_soft_pars):
+            new_p_c_global = ti.Vector.zero(T, 3)
+            for p in self.x:
+                new_p_c_global += self.p_c[p] / self.n_soft_pars
+            self.p_c_global[None] = new_p_c_global
+            # np_pc = self.p_c.to_numpy()
+            # np_pc_global = np.sum(np_pc, axis=0) / self.n_soft_pars
+            # self.p_c_global.from_numpy(np_pc_global)
+
                 
                 
-    
 
 
 
