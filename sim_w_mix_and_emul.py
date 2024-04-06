@@ -435,13 +435,18 @@ class MpmSim:
         self.rp_vol = self.default_p_vol
         self.rp_mass = self.rp_vol * self.rp_rho
 
-        self.coloring_mixng_alpha = 1e-3
+        self.coloring_mixng_alpha = 3e-3
         self.p_c_L1_distance_criterion = 0.1  # assess phases mixing uniformity
         self.uniform_coloring_mixng_alpha = 6.0
         self.emulsified_droplets_vol_ratio  = 0.1
-        # self.emul_rate_constant = 1.0
-        self.emul_rate_constant = 1e-1
 
+
+        max_alpha = 1e-3
+        critical_concentration = 0.7
+        self.emul_rate_constant0 = 10000.0
+        self.emul_rate_constant2 = 0.01
+        self.emul_rate_constant1 = (self.emul_rate_constant0 - (1 / max_alpha)) / \
+            ti.log(critical_concentration * self.emul_rate_constant2 + 1.0)
 
     @property
     def n_static_bounds(self):
@@ -987,17 +992,25 @@ class MpmSim:
                 # emulsifier_concentration = emulsifier_concentration
 
                 emulsion_color = ti.Vector([1.0, 1.0, 1.0])
-                k_a_eff = 0.0 
+                emul_eff = 0.0 
                 for q in ti.static(range(len(self.materials))):
                     if q == self.x_body_id[p]:
-                        k_a_eff = self.e_e[q]    
+                        emul_eff = self.e_e[q]    
 
 
                 D = (self.C[p] + self.C[p].transpose()) / 2.0
                 shear_rate = ti.sqrt(2.0 * (D[0, 1] ** 2 + D[0, 2] ** 2 + D[1, 2] ** 2))  
 
                 prev_emul = self.emul[p]
-                self.emul[p] += self.dt * self.emul_rate_constant * shear_rate * k_a_eff * emulsifier_concentration
+
+                alpha = (self.emul_rate_constant0 - (self.emul_rate_constant1 * 
+                    ti.log(1 + self.emul_rate_constant2 * emulsifier_concentration)))
+                
+                if alpha <= 0:
+                    alpha = 1e-7
+                
+                
+                self.emul[p] += self.dt * (1 / alpha) * shear_rate ** 2 * emul_eff
 
                 if self.emul[p] >= 1.0:
                     self.emul[p] = 1.0
