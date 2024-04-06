@@ -435,6 +435,13 @@ class MpmSim:
         self.rp_vol = self.default_p_vol
         self.rp_mass = self.rp_vol * self.rp_rho
 
+        self.coloring_mixng_alpha = 1e-3
+        self.p_c_L1_distance_criterion = 0.1  # assess phases mixing uniformity
+        self.uniform_coloring_mixng_alpha = 6.0
+        self.emulsified_droplets_vol_ratio  = 0.1
+        # self.emul_rate_constant = 1.0
+        self.emul_rate_constant = 1e-1
+
 
     @property
     def n_static_bounds(self):
@@ -804,8 +811,7 @@ class MpmSim:
 
 
                         # todo: better design for emulsion p_vol
-                        alpha = 0.1
-                        self.p_vol[p] = self.default_p_vol * (1 - (1 - alpha) * self.body_emulsification_efficiencies[i])
+                        self.p_vol[p] = self.default_p_vol * (1 - (1 - self.emulsified_droplets_vol_ratio) * self.body_emulsification_efficiencies[i])
 
                         # stress += self.compute_emulsion_stress(self.body_pars[i] * self.p_vol[p], 
                         #                 new_F, self.emul[p], self.body_emulsification_efficiencies[i])
@@ -930,23 +936,22 @@ class MpmSim:
                             new_v = self.dynamic_bounds[i].collide(new_x_tmp, new_v, self.dt, p_mass)
 
                 new_p_c_sum = 0
-                alpha = 1e-1 
                 for q in ti.static(range(self.n_phases)):
                     new_p_c_sum += new_p_c[q]
                 new_c = new_c / new_p_c_sum   
                 self.p_c[p] = new_p_c / new_p_c_sum 
 
-
-                p_c_L1_distance_criterion = 0.1  # assess phases mixing uniformity
+                alpha = self.coloring_mixng_alpha
                 delta_p_c = self.p_c[p] - self.p_c_global[None]
                 p_c_L1_distance = 0.0
                 for q in ti.static(range(self.n_phases)):
                     p_c_L1_distance += ti.abs(delta_p_c[q])
-                if p_c_L1_distance < p_c_L1_distance_criterion:
-                    alpha *= 1e2
+                if p_c_L1_distance < self.p_c_L1_distance_criterion:
+                    alpha = self.uniform_coloring_mixng_alpha
                 self.x_color[p] = self.x_color[p] + alpha * self.dt * (new_c - self.x_color[p])
                 self.v[p], self.C[p] = new_v, new_C
                 self.x[p] += self.dt * self.v[p]  # advection
+
 
         if ti.static(self.n_rigid_pars):
             for p in self.x_rp:
@@ -985,10 +990,14 @@ class MpmSim:
                 k_a_eff = 0.0 
                 for q in ti.static(range(len(self.materials))):
                     if q == self.x_body_id[p]:
-                        k_a_eff = self.e_e[q]              
-                alpha = 1
+                        k_a_eff = self.e_e[q]    
+
+
+                D = (self.C[p] + self.C[p].transpose()) / 2.0
+                shear_rate = ti.sqrt(2.0 * (D[0, 1] ** 2 + D[0, 2] ** 2 + D[1, 2] ** 2))  
+
                 prev_emul = self.emul[p]
-                self.emul[p] += self.dt * alpha * k_a_eff * emulsifier_concentration
+                self.emul[p] += self.dt * self.emul_rate_constant * shear_rate * k_a_eff * emulsifier_concentration
 
                 if self.emul[p] >= 1.0:
                     self.emul[p] = 1.0
