@@ -546,8 +546,11 @@ class MpmSim:
             self.tris_lag.from_numpy(np.asarray(self.lag_mesh.faces))
 
 
-        if self.n_soft_pars:
-            self.n_phases = len(self.deformable_bodies)    
+
+
+
+        if self.n_soft_pars:   
+            self.n_phases = len(self.deformable_bodies) #########
             self.x = vecs(3, T, self.n_soft_pars)
             self.emul = scalars(T, self.n_soft_pars)
             self.x_color = vecs(3, T, self.n_soft_pars)
@@ -555,6 +558,18 @@ class MpmSim:
             self.v = vecs(3, T, self.n_soft_pars)
             self.C = mats(3, 3, T, self.n_soft_pars)
             self.F = mats(3, 3, T, self.n_soft_pars)
+
+
+
+            self.body_x = {
+                i: ti.Vector.field(3, dtype=T, shape=self.body_pars[i])
+                for i in range(self.n_phases)
+            }
+
+            self.body_x_color = {
+                i: ti.Vector.field(3, dtype=T, shape=self.body_pars[i])
+                for i in range(self.n_phases)
+            }
 
             self.x_body_id = scalars(ti.i32, self.n_soft_pars)
             self.Jp = scalars(T, self.n_soft_pars)
@@ -726,7 +741,32 @@ class MpmSim:
                 0.68, 0.26, 0.19), radius=0.002)
 
         if self.x:
-            self.scene.particles(self.x, per_vertex_color=self.x_color, radius=0.003)
+
+            default_radius=0.0035
+            np_x_body_id = self.x_body_id.to_numpy()
+            np_x = self.x.to_numpy()
+            np_x_color = self.x_color.to_numpy()
+            np_p_vol = self.p_vol.to_numpy()
+            unique_body_ids = np.unique(np_x_body_id)
+            x_by_body_id = {}
+            x_color_by_body_id = {}
+            p_vol_by_body_id = {}
+            for body_id in unique_body_ids:
+                mask = np_x_body_id == body_id
+                x_by_body_id[body_id] = np_x[mask]
+                x_color_by_body_id[body_id] = np_x_color[mask]
+                p_vol_by_body_id[body_id] = np_p_vol[mask]
+
+                default_radius = 0.003
+                tmp_radius = (p_vol_by_body_id[body_id][0] / self.default_p_vol) ** (1/3) * default_radius
+                tmp_radius = float(round(tmp_radius, 3))
+                if tmp_radius < 0.002: # bug of ti.scene.particles()
+                    tmp_radius = 0.002
+                self.body_x[body_id].from_numpy(np_x[mask])
+                self.body_x_color[body_id].from_numpy(np_x_color[mask])
+                self.scene.particles(self.body_x[body_id], per_vertex_color=self.body_x_color[body_id], radius=tmp_radius)
+
+                
             # print(self.p_c.to_numpy())
             # print(self.emul.to_numpy(), np.sum(self.emul.to_numpy(), axis=0))
             # print(self.e_c.to_numpy())
@@ -940,8 +980,7 @@ class MpmSim:
                 emulsifier_concentration = 0.0  # warning: must be 0.0 instead of 0
                 for q in ti.static(range(self.n_phases)): 
                     emulsifier_concentration += self.p_c[p][q] * self.e_c[q]
-                emulsifier_concentration = emulsifier_concentration
-                # Langmuir 吸附等温线模
+                # emulsifier_concentration = emulsifier_concentration
 
                 emulsion_color = ti.Vector([1.0, 1.0, 1.0])
                 k_a_eff = 0.0 
