@@ -24,12 +24,42 @@ def compute_P_hat(sig, mu, lam):
 
 
 
+@ti.func
+def compute_emulsion_viscosity(viscosity, emul, phi_w=0.5, phi_m=0.64, viscosity_intrinsic=2.5, lambda_decay=2):
+    """
+    Calculates the viscosity of oil as a function of emulsification degree.
+
+    Parameters:
+    - alpha: Emulsification degree, ranging from 0 (no emulsification) to 1 (full emulsification).
+    - eta_0: Initial viscosity of oil (Pa.s), default is 0.1.
+    - phi_w: Maximum volume fraction of water, default is 0.5.
+    - phi_m: Maximum packing volume fraction, default is 0.64.
+    - eta_intrinsic: Intrinsic viscosity, default is 2.5.
+    - lambda_decay: Decay coefficient for the interaction force between oil droplets, default is 2.
+
+    Returns:
+    - viscosity: Viscosity of oil (Pa.s) at the given emulsification degree.
+    """
+    # Original fluid phase viscosity
+    viscosity_o = (1 - phi_w * emul) * viscosity * ti.exp(-lambda_decay * emul)
+    
+    # Suspension viscosity
+    viscosity_s = viscosity * (1 - (phi_w * emul) / phi_m)**(-viscosity_intrinsic * phi_m)
+    
+    # Emulsion viscosity
+    viscosity_e = (1 - phi_w * emul) * viscosity_o + (phi_w * emul) * viscosity_s
+    
+
+    return viscosity_e
+
+
+
 @ti.data_oriented
 class Material:
     pass
 
     @ti.func
-    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt, C):
+    def compute_kirchhoff_stress(self, F, dt, C, emul):
         raise NotImplementedError
 
 
@@ -46,7 +76,9 @@ class NeoHookean(Material):
         self.fluid = fluid
         
     @ti.func
-    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt, C):
+    def compute_kirchhoff_stress(self, F, dt, C, emul):
+        U, sig, V = ti.svd(F)
+        J = F.determinant()
         if self.fluid:
             F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
         kirchhoff_stress = 2 * self.mu * (F - U @ V.transpose()) @ \
@@ -64,7 +96,9 @@ class StVK_with_Hecky_strain(Material):
         self.fluid = fluid
     
     @ti.func
-    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt, C):
+    def compute_kirchhoff_stress(self, F, dt, C, emul):
+        U, sig, V = ti.svd(F)
+        J = F.determinant()
         P_hat = compute_P_hat(sig, self.mu, self.lam)
         P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
         if self.fluid:
@@ -85,11 +119,17 @@ class visco_StVK_with_Hecky_strain(Material):
         self.fluid = fluid
     
     @ti.func
-    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt, C):
+    def compute_kirchhoff_stress(self, F, dt, C, emul):
 
+        new_viscosity_v = self.viscosity_v
+        new_viscosity_d = self.viscosity_d
+
+        J = F.determinant()
+        
+        U, sig, V = ti.svd(F)
         epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
-        alpha = 2.0 * self.mu / self.viscosity_d
-        beta = 2.0 * (2.0 * self.mu + self.lam * 3) / (9.0 * self.viscosity_v) - 2.0 * self.mu / (self.viscosity_d * 3)
+        alpha = 2.0 * self.mu / new_viscosity_d
+        beta = 2.0 * (2.0 * self.mu + self.lam * 3) / (9.0 * new_viscosity_v) - 2.0 * self.mu / (new_viscosity_d * 3)
         A = 1 / (1 + dt * alpha)
         B = dt * beta / (1 + dt * (alpha + 3 * beta))
         epsilon_trace = ti.log(sig[0, 0]) + ti.log(sig[1, 1]) + ti.log(sig[2, 2])
@@ -99,10 +139,10 @@ class visco_StVK_with_Hecky_strain(Material):
         new_F = U @ new_sig @ V.transpose()
         P_hat = compute_P_hat(new_sig, self.mu, self.lam)
         P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
-        # new_J = new_F.determinant()
-        if self.fluid:
-            new_F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
         kirchhoff_stress_visco = P @ new_F.transpose()
+
+        if self.fluid:
+            F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
         
         return kirchhoff_stress_visco, new_F
 
@@ -119,16 +159,31 @@ class cross_visco_StVK_with_Hecky_strain(Material):
         self.fluid = fluid
         self.K = K # 时间常数的倒数
         self.m = m # 控制剪切变稀强度的参数
-        self.viscosity_inf = viscosity_inf #无限剪切速率下的粘度
-    
-    @ti.func
-    def compute_kirchhoff_stress(self, F, U, sig, V, J, dt, C):
+        self.viscosity_v_inf = viscosity_inf # 无限剪切速率下的粘度
+        self.viscosity_d_inf = viscosity_inf # 假设体积粘度与偏差粘度相同
+        self.viscosity_inf = viscosity_inf 
 
+    @ti.func
+    def compute_kirchhoff_stress(self, F, dt, C, emul):
+        
+        J = F.determinant()
+        if self.fluid:
+            F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
+
+        U, sig, V = ti.svd(F)
         D = (C + C.transpose()) / 2.0
         shear_rate = ti.sqrt(2.0 * (D[0, 1] ** 2 + D[0, 2] ** 2 + D[1, 2] ** 2))
-        viscosity_0 = self.viscosity_d
-        new_viscosity_d = self.viscosity_inf + (viscosity_0 - self.viscosity_inf) / (1.0 + ti.pow(self.K * shear_rate, self.m))
-        new_viscosity_v = new_viscosity_d
+
+
+
+        viscosity_d_0 = compute_emulsion_viscosity(self.viscosity_d, emul)
+        viscosity_v_0 = self.viscosity_v
+        new_viscosity_d = self.viscosity_d_inf + (viscosity_d_0 - self.viscosity_d_inf) / (1.0 + ti.pow(self.K * shear_rate, self.m))
+        new_viscosity_v = self.viscosity_d_inf + (viscosity_v_0 - self.viscosity_d_inf) / (1.0 + ti.pow(self.K * shear_rate, self.m))
+
+
+
+
 
         epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
         alpha = 2.0 * self.mu / new_viscosity_d
@@ -142,9 +197,6 @@ class cross_visco_StVK_with_Hecky_strain(Material):
         new_F = U @ new_sig @ V.transpose()
         P_hat = compute_P_hat(new_sig, self.mu, self.lam)
         P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
-        # new_J = new_F.determinant()
-        if self.fluid:
-            new_F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
         kirchhoff_stress_visco = P @ new_F.transpose()
         
         return kirchhoff_stress_visco, new_F
@@ -572,6 +624,21 @@ class MpmSim:
             [xab[2], xac[2]]
         ])
     
+
+    @ti.func
+    def compute_emulsion_stress(self, V0, F, Emul, Emul_Eff):
+        # epsilon = 1e-3
+        # sigma = 1e-2
+        # d0 = 1e-3
+        alpha = 5e-5
+        cauchy_green = F.transpose() @ F  
+        i_cauchy = cauchy_green.trace()  
+        # phi1 = 4 * Emul * epsilon / V0 * 12 * (sigma / d0) ** 12 * i_cauchy **(-7) * d0
+        # phi2 = 4 * Emul * epsilon / V0 * 6 * (sigma / d0) ** 6 * i_cauchy **(-4) * d0
+        # stress = (phi1 - phi2) * F @ cauchy_green
+        stress = alpha * Emul_Eff * (1 - Emul) * ti.pow(i_cauchy, -3) * F @ cauchy_green
+        return stress
+    
     @ti.func
     def compute_area_lag(self, i):
         a, b, c = self.tris_lag[i,
@@ -693,26 +760,26 @@ class MpmSim:
                 # deformation gradient update
                 self.F[p] = (ti.Matrix.identity(float, 3) +
                             self.dt * self.C[p]) @ self.F[p]
-                U, sig, V = ti.svd(self.F[p])
-                J = 1.0
-                for d in ti.static(range(3)):
-                    new_sig = sig[d, d]
-                    self.Jp[p] *= sig[d, d] / new_sig
-                    sig[d, d] = new_sig
-                    J *= new_sig
 
                 
                 particle_phase = ti.Vector.zero(T, self.n_phases)
-                stress, new_F = self.materials[0].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
+                new_F = ti.Matrix.identity(T, 3)
+                stress = ti.Matrix.identity(T, 3)
                 for i in ti.static(range(len(self.materials))):
                     if i == self.x_body_id[p]:
-                        stress, new_F = self.materials[i].compute_kirchhoff_stress(self.F[p], U, sig, V, J, self.dt, self.C[p])
+                    
                         particle_phase[i] = 1
                         self.p_rho[p] = self.body_rhos[i]
+                        stress, new_F = self.materials[i].compute_kirchhoff_stress(self.F[p], self.dt, self.C[p], self.emul[p])
+
 
                         # todo: better design for emulsion p_vol
                         alpha = 0.1
                         self.p_vol[p] = self.default_p_vol * (1 - (1 - alpha) * self.body_emulsification_efficiencies[i])
+
+                        # stress += self.compute_emulsion_stress(self.body_pars[i] * self.p_vol[p], 
+                        #                 new_F, self.emul[p], self.body_emulsification_efficiencies[i])
+
 
                 p_mass = self.p_rho[p] * self.p_vol[p]
                 self.F[p] = new_F

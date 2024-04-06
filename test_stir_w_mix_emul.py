@@ -36,7 +36,7 @@ def test_sim():
 
     fluid_par2 = np.random.rand(5000, 3) * 0.05
     fluid_par2 = fluid_par2 - fluid_par2.mean(axis=0) + np.array([0.0, 0.1, 0.0])
-    yolk_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 0.1, 0.1, 1, 1)
+    yolk_material = cross_visco_StVK_with_Hecky_strain(0.5, 0.15, 0.1, 0.1, 1, 1)
     yolk = SoftBody(rest_pars_pos=fluid_par2, material=yolk_material, color=np.array([1.0, 0.3, 0.0]),  
                      emulsification_efficiency = 0, emulsifier_capacity = 1, density=1)
 
