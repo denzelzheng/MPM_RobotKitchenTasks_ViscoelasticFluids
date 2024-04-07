@@ -25,7 +25,7 @@ def test_sim():
     stir_folder = './data/stir/'
     cut_folder = './data/cut/cut0001/'
     equilibrated_material = StVK_with_Hecky_strain(0.3, 0.15, True)
-    non_equilibrated_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 1, 0, 0.7, 1)
+    non_equilibrated_material = cross_visco_StVK_with_Hecky_strain(0.3, 0.15, 0.01, 0.01, 1, 1, True)
 
     fluid_par = np.random.rand(15000, 3) * 0.15
     fluid_par = fluid_par - fluid_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])

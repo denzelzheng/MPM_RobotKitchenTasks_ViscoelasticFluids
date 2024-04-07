@@ -36,7 +36,8 @@ def compute_emulsion_viscosity(viscosity, emul, phi_w=0.5, phi_m=0.64, viscosity
     # Emulsion viscosity
     viscosity_e = (1 - phi_w * emul) * viscosity_o + (phi_w * emul) * viscosity_s
     
-
+    # if(emul == 1):
+    #     print(viscosity_e)
     return viscosity_e
 
 
@@ -436,13 +437,13 @@ class MpmSim:
         self.rp_vol = self.default_p_vol
         self.rp_mass = self.rp_vol * self.rp_rho
 
-        self.coloring_mixing_alpha = 3e-2
+        self.coloring_mixing_alpha = 7e-2
         self.p_c_L1_distance_criterion = 0.2  # assess phases mixing uniformity
         self.uniform_coloring_mixing_alpha = 3.0
         self.emulsified_droplets_vol_ratio  = 0.1
 
         # max_alpha = 3e-4
-        max_alpha = 5e-3
+        max_alpha = 3.5e-3
         critical_concentration = 0.25
         self.emul_rate_constant0 = 10000.0
         self.emul_rate_constant2 = 0.01
@@ -784,7 +785,7 @@ class MpmSim:
             for b in self.dynamic_bounds:
                 self.scene.mesh(b.vertices, b.faces, color=(0.25, 0.25, 0.25))
         if self.n_lag_verts:
-            self.scene.mesh(self.x_lag, self.tris_lag_expanded, color=(0.15, 0.15, 0.3))
+            self.scene.mesh(self.x_lag, self.tris_lag_expanded, color=(0.3, 0.5, 0.3))
 
 
     def show(self):
