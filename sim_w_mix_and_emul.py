@@ -84,12 +84,13 @@ class StVK_with_Hecky_strain(Material):
     
     @ti.func
     def compute_kirchhoff_stress(self, F, dt, C, emul):
-        U, sig, V = ti.svd(F)
+        
         J = F.determinant()
-        P_hat = compute_P_hat(sig, self.mu, self.lam)
-        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
         if self.fluid:
             F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
+        U, sig, V = ti.svd(F)
+        P_hat = compute_P_hat(sig, self.mu, self.lam)
+        P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
         kirchhoff_stress = P @ F.transpose()
         return kirchhoff_stress, F
 
@@ -435,14 +436,14 @@ class MpmSim:
         self.rp_vol = self.default_p_vol
         self.rp_mass = self.rp_vol * self.rp_rho
 
-        self.coloring_mixng_alpha = 3e-3
-        self.p_c_L1_distance_criterion = 0.1  # assess phases mixing uniformity
-        self.uniform_coloring_mixng_alpha = 6.0
+        self.coloring_mixing_alpha = 3e-2
+        self.p_c_L1_distance_criterion = 0.2  # assess phases mixing uniformity
+        self.uniform_coloring_mixing_alpha = 3.0
         self.emulsified_droplets_vol_ratio  = 0.1
 
-
-        max_alpha = 1e-3
-        critical_concentration = 0.7
+        # max_alpha = 3e-4
+        max_alpha = 5e-3
+        critical_concentration = 0.25
         self.emul_rate_constant0 = 10000.0
         self.emul_rate_constant2 = 0.01
         self.emul_rate_constant1 = (self.emul_rate_constant0 - (1 / max_alpha)) / \
@@ -946,13 +947,15 @@ class MpmSim:
                 new_c = new_c / new_p_c_sum   
                 self.p_c[p] = new_p_c / new_p_c_sum 
 
-                alpha = self.coloring_mixng_alpha
+                alpha = self.coloring_mixing_alpha
                 delta_p_c = self.p_c[p] - self.p_c_global[None]
                 p_c_L1_distance = 0.0
                 for q in ti.static(range(self.n_phases)):
                     p_c_L1_distance += ti.abs(delta_p_c[q])
                 if p_c_L1_distance < self.p_c_L1_distance_criterion:
-                    alpha = self.uniform_coloring_mixng_alpha
+                    alpha = self.uniform_coloring_mixing_alpha
+                # if self.emul[p] == 1:
+                #     alpha = 1e3
                 self.x_color[p] = self.x_color[p] + alpha * self.dt * (new_c - self.x_color[p])
                 self.v[p], self.C[p] = new_v, new_C
                 self.x[p] += self.dt * self.v[p]  # advection
@@ -1020,7 +1023,7 @@ class MpmSim:
     @ti.kernel
     def compute_global_phase_concentration(self):
         if ti.static(self.n_soft_pars):
-            new_p_c_global = ti.Vector.zero(T, 3)
+            new_p_c_global = ti.Vector.zero(T, self.n_phases)
             for p in self.x:
                 new_p_c_global += self.p_c[p] / self.n_soft_pars
             self.p_c_global[None] = new_p_c_global
