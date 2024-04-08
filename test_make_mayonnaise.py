@@ -24,19 +24,24 @@ def test_sim():
 
     stir_folder = './data/stir/'
     cut_folder = './data/cut/cut0001/'
-    oil_material_equilibrated = StVK_with_Hecky_strain(0.3, 0.35, True)
-    oil_material_non_equilibrated = cross_visco_StVK_with_Hecky_strain(0.3, 0.35, 1e-3, 1e-3, 1, 1, True)
+    oil_material_equilibrated = StVK_with_Hecky_strain(0.25, 0.41, True)
+    oil_material_non_equilibrated = cross_visco_StVK_with_Hecky_strain(0.25, 0.41, 1e-5, 1e-5, 1, 1, True)
 
     oil_par = np.random.rand(25000, 3) * 0.15 * np.array([1, 1, 1])
     oil_par = oil_par - oil_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])
-    oil_equilibrated = SoftBody(oil_par, oil_material_equilibrated, np.array([0.68, 0.7, 0.13]), 1, 0, 0.9)
-    oil_non_equilibrated = SoftBody(oil_par, oil_material_non_equilibrated, np.array([0.65, 0.73, 0.13]), 1, 0, 0.9)
+    oil_color = np.array([0.73, 0.6, 0.13])
+    oil_equilibrated = SoftBody(oil_par, oil_material_equilibrated, oil_color, 1, 0, 0.9)
+    oil_non_equilibrated = SoftBody(oil_par, oil_material_non_equilibrated, oil_color, 1, 0, 0.9)
 
 
-    yolk_par = np.random.rand(5000, 3) * 0.05
-    yolk_par = yolk_par - yolk_par.mean(axis=0) + np.array([0.0, 0.13, 0.0])
-    yolk_material = cross_visco_StVK_with_Hecky_strain(1, 0.15, 0.1, 0.03, 1, 1, True)
-    yolk = SoftBody(rest_pars_pos=yolk_par, material=yolk_material, color=np.array([1.0, 0.3, 0.0]),  
+    yolk_par = np.random.rand(2500, 3) * 0.05
+    yolk_par = yolk_par - yolk_par.mean(axis=0) + np.array([0.0, 0.15, 0.0])
+    yolk_material_equilibrated = StVK_with_Hecky_strain(3, 0.1, True)
+    yolk_material_non_equilibrated = cross_visco_StVK_with_Hecky_strain(3, 0.1, 0.1, 0.03, 1, 1, True)
+    yolk_color = np.array([1.0, 0.3, 0.0])
+    yolk_equilibrated = SoftBody(rest_pars_pos=yolk_par, material=yolk_material_equilibrated, color=yolk_color,  
+                     emulsification_efficiency = 0, emulsifier_capacity = 1, density=1)
+    yolk_non_equilibrated = SoftBody(rest_pars_pos=yolk_par, material=yolk_material_non_equilibrated, color=yolk_color,  
                      emulsification_efficiency = 0, emulsifier_capacity = 1, density=1)
 
 
@@ -51,6 +56,7 @@ def test_sim():
 
     basin_mesh_lag = trimesh.load_mesh(pjoin(stir_folder, 'basin_remesh1.obj'))
     basin_mesh_lag.vertices = basin_mesh.vertices - basin_mesh.vertices.mean(axis=0)
+    basin_mesh_lag.vertices *= np.array([1, 1.7, 1])
     # basin_mesh_lag.vertices *= 0.5
     basin_mesh_lag.vertices += np.array([0.0, -0.06, 0.0])
 
@@ -76,7 +82,8 @@ def test_sim():
     sim.add_lag_body(basin_mesh_lag, 5e4, 0.1)
     sim.add_body(oil_equilibrated)
     sim.add_body(oil_non_equilibrated)
-    sim.add_body(yolk)
+    sim.add_body(yolk_equilibrated)
+    sim.add_body(yolk_non_equilibrated)
     sim.init_system()
 
     print("start simulation...")
@@ -86,14 +93,14 @@ def test_sim():
     x, y, z = 0, 0, 0
     down = True
     move_to_right_limit = True 
-    stir_limit = 0.065
+    stir_limit = 0.063
     circle_radius = stir_limit
     angle = 0
-    angle_step = 0.003 
+    angle_step = 0.0015 
 
     while not sim.window.is_pressed(ti.GUI.ESCAPE):
         for s in range(substeps):
-            if down and y <= -0.211:
+            if down and y <= -0.215:
                 down = False
             if down:
                 y -= 0.00005

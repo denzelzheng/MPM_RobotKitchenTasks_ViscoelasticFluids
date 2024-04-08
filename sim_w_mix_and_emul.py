@@ -437,18 +437,18 @@ class MpmSim:
         self.rp_vol = self.default_p_vol
         self.rp_mass = self.rp_vol * self.rp_rho
 
-        self.coloring_mixing_alpha = 7e-2
+        self.coloring_mixing_alpha = 0.6
         self.p_c_L1_distance_criterion = 0.2  # assess phases mixing uniformity
         self.uniform_coloring_mixing_alpha = 3.0
-        self.emulsified_droplets_vol_ratio  = 0.1
+        self.emulsified_droplets_vol_ratio  = 1
 
         # max_alpha = 3e-4
-        max_alpha = 3.5e-3
-        critical_concentration = 0.25
-        self.emul_rate_constant0 = 10000.0
-        self.emul_rate_constant2 = 0.01
-        self.emul_rate_constant1 = (self.emul_rate_constant0 - (1 / max_alpha)) / \
-            ti.log(critical_concentration * self.emul_rate_constant2 + 1.0)
+        self.alpha_for_emul_rate = 5e-3
+        self.critical_concentration = 0.03
+        # self.emul_rate_constant0 = 1e6
+        # self.emul_rate_constant2 = 0.001
+        # self.emul_rate_constant1 = (self.emul_rate_constant0 - (1 / self.alpha_for_emul_rate)) / \
+        #     ti.log(self.critical_concentration * self.emul_rate_constant2 + 1.0)
 
     @property
     def n_static_bounds(self):
@@ -1007,14 +1007,8 @@ class MpmSim:
 
                 prev_emul = self.emul[p]
 
-                alpha = (self.emul_rate_constant0 - (self.emul_rate_constant1 * 
-                    ti.log(1 + self.emul_rate_constant2 * emulsifier_concentration)))
-                
-                if alpha <= 0:
-                    alpha = 1e-7
-                
-                
-                self.emul[p] += self.dt * (1 / alpha) * shear_rate ** 2 * emul_eff
+                if emulsifier_concentration >= self.critical_concentration:
+                    self.emul[p] += self.dt * self.alpha_for_emul_rate * shear_rate ** 2 * emul_eff
 
                 if self.emul[p] >= 1.0:
                     self.emul[p] = 1.0
