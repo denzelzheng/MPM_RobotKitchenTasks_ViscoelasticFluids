@@ -25,18 +25,18 @@ def compute_P_hat(sig, mu, lam):
 
 
 @ti.func
-def compute_emulsion_viscosity(viscosity, emul, phi_w=0.5, phi_m=0.64, viscosity_intrinsic=2.5, lambda_decay=2):
+def compute_hydrationsion_viscosity(viscosity, hydration, phi_w=0.5, phi_m=0.64, viscosity_intrinsic=2.5, lambda_decay=2):
 
     # Original fluid phase viscosity
-    viscosity_o = (1 - phi_w * emul) * viscosity * ti.exp(-lambda_decay * emul)
+    viscosity_o = (1 - phi_w * hydration) * viscosity * ti.exp(-lambda_decay * hydration)
     
     # Suspension viscosity
-    viscosity_s = viscosity * (1 - (phi_w * emul) / phi_m)**(-viscosity_intrinsic * phi_m)
+    viscosity_s = viscosity * (1 - (phi_w * hydration) / phi_m)**(-viscosity_intrinsic * phi_m)
     
-    # Emulsion viscosity
-    viscosity_e = (1 - phi_w * emul) * viscosity_o + (phi_w * emul) * viscosity_s
+    # hydrationsion viscosity
+    viscosity_e = (1 - phi_w * hydration) * viscosity_o + (phi_w * hydration) * viscosity_s
     
-    # if(emul == 1):
+    # if(hydration == 1):
     #     print(viscosity_e)
     return viscosity_e
 
@@ -55,7 +55,7 @@ class Material:
     pass
 
     @ti.func
-    def compute_kirchhoff_stress(self, F, dt, C, emul):
+    def compute_kirchhoff_stress(self, F, dt, C, hydration):
         raise NotImplementedError
 
 
@@ -72,7 +72,7 @@ class NeoHookean(Material):
         self.fluid = fluid
         
     @ti.func
-    def compute_kirchhoff_stress(self, F, dt, C, emul):
+    def compute_kirchhoff_stress(self, F, dt, C, hydration):
         U, sig, V = ti.svd(F)
         J = F.determinant()
         if self.fluid:
@@ -93,12 +93,11 @@ class NeoHookean_VonMise(Material):
         self.yield_stress = yield_stress
         
     @ti.func
-    def compute_kirchhoff_stress(self, F, dt, C, emul):
+    def compute_kirchhoff_stress(self, F, dt, C, hydration):
         U, sig, V = ti.svd(F)
         J = F.determinant()
         if self.fluid:
             F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
-
 
         temp_sig = ti.max(sig, 0.05)
         epsilon = ti.Vector([ti.log(temp_sig[0, 0]), ti.log(temp_sig[1, 1]), ti.log(temp_sig[2, 2])])
@@ -120,6 +119,65 @@ class NeoHookean_VonMise(Material):
 
 
 
+class hydration_material(Material):
+    def __init__(self, E: float = 5e3, nu: float = 0.2, yield_stress: float = 1e3, viscosity_v: float = 1, fluid: bool = False) -> None:
+        super().__init__()
+        self.mu, self.lam = E / (2 * (1 + nu)), E * \
+            nu / ((1+nu) * (1 - 2 * nu))
+        self.fluid = fluid
+        self.viscosity_v = viscosity_v
+        self.viscosity_d = viscosity_v  # 假设体积粘度与偏差粘度相同
+        self.yield_stress = yield_stress
+        
+    @ti.func
+    def compute_kirchhoff_stress(self, F, dt, C, hydration):
+        U, sig, V = ti.svd(F)
+        J = F.determinant()
+        
+        if self.fluid:
+            F = ti.Matrix.identity(float, 3) * ti.pow(J, 1/3)
+        
+        kirchhoff_stress = ti.Matrix.identity(T, 3)
+
+        if hydration == 0 :
+
+            temp_sig = ti.max(sig, 0.05)
+            epsilon = ti.Vector([ti.log(temp_sig[0, 0]), ti.log(temp_sig[1, 1]), ti.log(temp_sig[2, 2])])
+            epsilon_hat = epsilon - (epsilon.sum() / 3)
+            epsilon_hat_norm = norm(epsilon_hat)
+            delta_gamma = epsilon_hat_norm - self.yield_stress / (2 * self.mu)
+
+            if delta_gamma > 0:  # Yields
+                epsilon -= (delta_gamma / epsilon_hat_norm) * epsilon_hat
+                temp_sig = make_matrix_from_diag(ti.exp(epsilon))
+                F = U @ temp_sig @ V.transpose()
+                sig = temp_sig
+            
+
+            kirchhoff_stress = 2 * self.mu * (F - U @ V.transpose()) @ \
+                        F.transpose() + ti.Matrix.identity(float, 3) * \
+                        self.lam * J * (J - 1)
+    
+        else:
+            new_viscosity_v = self.viscosity_v
+            new_viscosity_d = self.viscosity_d
+
+            epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
+            alpha = 2.0 * self.mu / new_viscosity_d
+            beta = 2.0 * (2.0 * self.mu + self.lam * 3) / (9.0 * new_viscosity_v) - 2.0 * self.mu / (new_viscosity_d * 3)
+            A = 1 / (1 + dt * alpha)
+            B = dt * beta / (1 + dt * (alpha + 3 * beta))
+            epsilon_trace = ti.log(sig[0, 0]) + ti.log(sig[1, 1]) + ti.log(sig[2, 2])
+            temp_epsilon = A * (epsilon - ti.Vector([B * epsilon_trace, B * epsilon_trace, B * epsilon_trace]) )  
+            d = ti.exp(temp_epsilon)
+            new_sig = ti.Matrix([[d[0], 0.0, 0.0], [0.0, d[1], 0.0], [0.0, 0.0, d[2]]])
+            F = U @ new_sig @ V.transpose()
+            P_hat = compute_P_hat(new_sig, self.mu, self.lam)
+            P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
+            kirchhoff_stress = P @ F.transpose()
+            
+        return kirchhoff_stress, F
+
 
 
 
@@ -131,7 +189,7 @@ class StVK_with_Hecky_strain(Material):
         self.fluid = fluid
     
     @ti.func
-    def compute_kirchhoff_stress(self, F, dt, C, emul):
+    def compute_kirchhoff_stress(self, F, dt, C, hydration):
         
         J = F.determinant()
         if self.fluid:
@@ -155,7 +213,7 @@ class visco_StVK_with_Hecky_strain(Material):
         self.fluid = fluid
     
     @ti.func
-    def compute_kirchhoff_stress(self, F, dt, C, emul):
+    def compute_kirchhoff_stress(self, F, dt, C, hydration):
 
         new_viscosity_v = self.viscosity_v
         new_viscosity_d = self.viscosity_d
@@ -200,7 +258,7 @@ class cross_visco_StVK_with_Hecky_strain(Material):
         self.viscosity_inf = viscosity_inf 
 
     @ti.func
-    def compute_kirchhoff_stress(self, F, dt, C, emul):
+    def compute_kirchhoff_stress(self, F, dt, C, hydration):
         
         J = F.determinant()
         if self.fluid:
@@ -212,7 +270,7 @@ class cross_visco_StVK_with_Hecky_strain(Material):
 
 
 
-        viscosity_d_0 = compute_emulsion_viscosity(self.viscosity_d, emul)
+        viscosity_d_0 = compute_hydrationsion_viscosity(self.viscosity_d, hydration)
         viscosity_v_0 = self.viscosity_v
         new_viscosity_d = self.viscosity_d_inf + (viscosity_d_0 - self.viscosity_d_inf) / (1.0 + ti.pow(self.K * shear_rate, self.m))
         new_viscosity_v = self.viscosity_d_inf + (viscosity_v_0 - self.viscosity_d_inf) / (1.0 + ti.pow(self.K * shear_rate, self.m))
@@ -422,12 +480,12 @@ class Body:
 
 class SoftBody(Body):
     def __init__(self, rest_pars_pos: np.ndarray, material: Material, color: np.ndarray, 
-                 emulsification_efficiency: float, emulsifier_capacity: float, density: float) -> None:
+                 hygroscopicity: float, hydrating_efficacy: float, density: float) -> None:
         self.rest_pos: np.ndarray = rest_pars_pos
         self.material: Material = material
         self.color: np.ndarray = color
-        self.emulsification_efficiency: float = emulsification_efficiency
-        self.emulsifier_capacity: float = emulsifier_capacity
+        self.hygroscopicity: float = hygroscopicity
+        self.hydrating_efficacy: float = hydrating_efficacy
         self.rho: float = density
 
 
@@ -440,7 +498,7 @@ class RigidBody(Body):
     def __init__(self, mesh: trimesh.Trimesh, dx=1/128) -> None:
         self.mesh: trimesh.Trimesh = mesh.copy()
         n_points = int(3 * mesh.area / dx ** 2)
-        points, face_inds = trimesh.sample.sample_surface_even(
+        points, face_inds = trimesh.sample.sample_surfachygroscopicityven(
             self.mesh, n_points)
         self.sample_faces_verts = self.mesh.vertices[self.mesh.faces[face_inds]]
         self.sample_bc_weights = trimesh.triangles.points_to_barycentric(
@@ -491,18 +549,18 @@ class MpmSim:
         self.rp_vol = self.default_p_vol
         self.rp_mass = self.rp_vol * self.rp_rho
 
-        self.coloring_mixing_alpha = 0.6
-        self.p_c_L1_distance_criterion = 0.2  # assess phases mixing uniformity
-        self.uniform_coloring_mixing_alpha = 3.0
-        self.emulsified_droplets_vol_ratio  = 1
+        self.coloring_mixing_alpha = 0.0
+        self.p_c_L1_distanchydrating_efficacyriterion = 0.2  # assess phases mixing uniformity
+        self.uniform_coloring_mixing_alpha = 1.0
+        self.hydrationsified_droplets_vol_ratio  = 1
 
         # max_alpha = 3e-4
-        self.alpha_for_emul_rate = 5e-3
-        self.critical_concentration = 0.03
-        # self.emul_rate_constant0 = 1e6
-        # self.emul_rate_constant2 = 0.001
-        # self.emul_rate_constant1 = (self.emul_rate_constant0 - (1 / self.alpha_for_emul_rate)) / \
-        #     ti.log(self.critical_concentration * self.emul_rate_constant2 + 1.0)
+        # self.alpha_for_hydration_rate = 5e-3
+        self.critical_concentration = 1e-2
+        # self.hydration_rathydrating_efficacyonstant0 = 1e6
+        # self.hydration_rathydrating_efficacyonstant2 = 0.001
+        # self.hydration_rathydrating_efficacyonstant1 = (self.hydration_rathydrating_efficacyonstant0 - (1 / self.alpha_for_hydration_rate)) / \
+        #     ti.log(self.critical_concentration * self.hydration_rathydrating_efficacyonstant2 + 1.0)
 
     @property
     def n_static_bounds(self):
@@ -535,13 +593,13 @@ class MpmSim:
         self.materials = []
         self.body_pars = []
         self.body_colors = []
-        self.body_emulsifier_capacities = []
-        self.body_emulsification_efficiencies = []
+        self.body_hydrating_efficacy = []
+        self.body_hygroscopicity = []
         self.body_rhos = []
 
         # fileds
         self.x: Optional[vecs] = None
-        self.emul: Optional[scalars] = None   # degree of emulsification
+        self.hydration: Optional[scalars] = None   # degree of hydrationsification
         self.x_body_id: Optional[scalars] = None
         self.x_color: Optional[vecs] = None
         self.v: Optional[vecs] = None
@@ -549,10 +607,10 @@ class MpmSim:
         self.p_vol: Optional[scalars] = None
         self.C: Optional[mats] = None
         self.F: Optional[mats] = None
-        self.p_c: Optional[vecs] = None     # phase_counts for phase_concentrations
+        self.p_c: Optional[vecs] = None     # phashydrating_efficacyounts for phashydrating_efficacyoncentrations
         self.p_c_global: Optional[scalars] = None
-        self.e_c: Optional[scalars] = None   # emulsifier_capacity
-        self.e_e: Optional[scalars] = None   # emulsification_efficiency
+        self.hydrating_efficacy: Optional[scalars] = None
+        self.hygroscopicity: Optional[scalars] = None  
         self.Jp: Optional[scalars] = None
         self.grid_v: Optional[vecs] = None
         self.grid_m: Optional[scalars] = None
@@ -608,7 +666,7 @@ class MpmSim:
         if self.n_soft_pars:   
             self.n_phases = len(self.deformable_bodies)
             self.x = vecs(3, T, self.n_soft_pars)
-            self.emul = scalars(T, self.n_soft_pars)
+            self.hydration = scalars(T, self.n_soft_pars)
             self.x_color = vecs(3, T, self.n_soft_pars)
             self.p_c = vecs(self.n_phases, T, self.n_soft_pars)
             self.p_c_global = vecs(self.n_phases, T, ())
@@ -632,8 +690,10 @@ class MpmSim:
             self.Jp = scalars(T, self.n_soft_pars)
             self.p_vol = scalars(T, self.n_soft_pars)
             self.p_rho = scalars(T, self.n_soft_pars)
-            self.e_c = scalars(T, self.n_phases)
-            self.e_e = scalars(T, self.n_phases)
+            self.hydrating_efficacy = scalars(T, self.n_phases)
+            self.hygroscopicity = scalars(T, self.n_phases)
+
+
             np_x = np.concatenate(
                 [b.rest_pos for b in self.deformable_bodies], axis=0) 
             self.x.from_numpy(np_x - self.origin)
@@ -641,8 +701,8 @@ class MpmSim:
             np_body_id = np.concatenate([np.full(pars, i) for i, pars in enumerate(self.body_pars)])
             self.x_body_id.from_numpy(np_body_id)
             
-            self.e_e.from_numpy(np.array(self.body_emulsification_efficiencies))
-            self.e_c.from_numpy(np.array(self.body_emulsifier_capacities))
+            self.hygroscopicity.from_numpy(np.array(self.body_hygroscopicity))
+            self.hydrating_efficacy.from_numpy(np.array(self.body_hydrating_efficacy))
 
 
             np_colors = np.concatenate([np.tile(color, (pars, 1)) for color, pars in zip(self.body_colors, self.body_pars)])
@@ -697,19 +757,6 @@ class MpmSim:
         ])
     
 
-    @ti.func
-    def compute_emulsion_stress(self, V0, F, Emul, Emul_Eff):
-        # epsilon = 1e-3
-        # sigma = 1e-2
-        # d0 = 1e-3
-        alpha = 5e-5
-        cauchy_green = F.transpose() @ F  
-        i_cauchy = cauchy_green.trace()  
-        # phi1 = 4 * Emul * epsilon / V0 * 12 * (sigma / d0) ** 12 * i_cauchy **(-7) * d0
-        # phi2 = 4 * Emul * epsilon / V0 * 6 * (sigma / d0) ** 6 * i_cauchy **(-4) * d0
-        # stress = (phi1 - phi2) * F @ cauchy_green
-        stress = alpha * Emul_Eff * (1 - Emul) * ti.pow(i_cauchy, -3) * F @ cauchy_green
-        return stress
     
     @ti.func
     def compute_area_lag(self, i):
@@ -778,7 +825,7 @@ class MpmSim:
         self.P2G()
         self.grid_op()
         self.G2P()
-        self.emulsification_update()
+        self.hydration_update()
         self.compute_global_phase_concentration()
 
     @ti.kernel
@@ -826,8 +873,8 @@ class MpmSim:
 
             # print(self.p_c.to_numpy())
             # print(self.p_c_global.to_numpy())
-            # print(self.emul.to_numpy(), np.sum(self.emul.to_numpy(), axis=0))
-            # print(self.e_c.to_numpy())
+            # print(self.hydration.to_numpy(), np.sum(self.hydration.to_numpy(), axis=0))
+            # print(self.hydrating_efficacy.to_numpy())
 
         if self.x_rp:
             self.scene.particles(self.x_rp, color=(
@@ -868,14 +915,7 @@ class MpmSim:
                     
                         particle_phase[i] = 1
                         self.p_rho[p] = self.body_rhos[i]
-                        stress, new_F = self.materials[i].compute_kirchhoff_stress(self.F[p], self.dt, self.C[p], self.emul[p])
-
-
-                        # todo: better design for emulsion p_vol
-                        self.p_vol[p] = self.default_p_vol * (1 - (1 - self.emulsified_droplets_vol_ratio) * self.body_emulsification_efficiencies[i])
-
-                        # stress += self.compute_emulsion_stress(self.body_pars[i] * self.p_vol[p], 
-                        #                 new_F, self.emul[p], self.body_emulsification_efficiencies[i])
+                        stress, new_F = self.materials[i].compute_kirchhoff_stress(self.F[p], self.dt, self.C[p], self.hydration[p])
 
 
                 p_mass = self.p_rho[p] * self.p_vol[p]
@@ -1007,9 +1047,9 @@ class MpmSim:
                 p_c_L1_distance = 0.0
                 for q in ti.static(range(self.n_phases)):
                     p_c_L1_distance += ti.abs(delta_p_c[q])
-                if p_c_L1_distance < self.p_c_L1_distance_criterion:
+                if p_c_L1_distance < self.p_c_L1_distanchydrating_efficacyriterion:
                     alpha = self.uniform_coloring_mixing_alpha
-                # if self.emul[p] == 1:
+                # if self.hydration[p] == 1:
                 #     alpha = 1e3
                 self.x_color[p] = self.x_color[p] + alpha * self.dt * (new_c - self.x_color[p])
                 self.v[p], self.C[p] = new_v, new_C
@@ -1041,33 +1081,24 @@ class MpmSim:
 
 # todo: refine the model
     @ti.kernel
-    def emulsification_update(self):
+    def hydration_update(self):
         if ti.static(self.n_soft_pars):
             for p in self.x:
-                emulsifier_concentration = 0.0  # warning: must be 0.0 instead of 0
+                water_absorb = 0.0
+                hydra_concentration = 0.0  # warning: must be 0.0 instead of 0
                 for q in ti.static(range(self.n_phases)): 
-                    emulsifier_concentration += self.p_c[p][q] * self.e_c[q]
-                # emulsifier_concentration = emulsifier_concentration
+                    hydra_concentration += self.p_c[p][q] * self.hydrating_efficacy[q]
 
-                emulsion_color = ti.Vector([1.0, 1.0, 1.0])
-                emul_eff = 0.0 
                 for q in ti.static(range(len(self.materials))):
-                    if q == self.x_body_id[p]:
-                        emul_eff = self.e_e[q]    
+                    if q == self.x_body_id[p] and self.hygroscopicity[q] > 0.5:
+                        water_absorb = 1.0
 
+                hydration_color = ti.Vector([0.7, 0.7, 0.55]) 
+                prev_hydration = self.hydration[p]
 
-                D = (self.C[p] + self.C[p].transpose()) / 2.0
-                shear_rate = ti.sqrt(2.0 * (D[0, 1] ** 2 + D[0, 2] ** 2 + D[1, 2] ** 2))  
-
-                prev_emul = self.emul[p]
-
-                if emulsifier_concentration >= self.critical_concentration:
-                    self.emul[p] += self.dt * self.alpha_for_emul_rate * shear_rate ** 2 * emul_eff
-
-                if self.emul[p] >= 1.0:
-                    self.emul[p] = 1.0
-                
-                self.x_color[p] += (self.emul[p] - prev_emul) * (emulsion_color - self.x_color[p])
+                if hydra_concentration >= self.critical_concentration and water_absorb > 1e-5:
+                    self.hydration[p] = 1.0
+                    self.x_color[p] += (self.hydration[p] - prev_hydration) * (hydration_color - self.x_color[p])
 
     @ti.kernel
     def compute_global_phase_concentration(self):
@@ -1118,8 +1149,8 @@ class MpmSim:
             self.body_pars.append(body.n_pars)
             self.materials.append(body.material)
             self.body_colors.append(body.color)
-            self.body_emulsification_efficiencies.append(body.emulsification_efficiency)
-            self.body_emulsifier_capacities.append(body.emulsifier_capacity)
+            self.body_hygroscopicity.append(body.hygroscopicity)
+            self.body_hydrating_efficacy.append(body.hydrating_efficacy)
             self.body_rhos.append(body.rho)
         else:
             raise NotImplementedError()

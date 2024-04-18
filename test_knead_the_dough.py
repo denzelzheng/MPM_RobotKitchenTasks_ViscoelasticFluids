@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation as R
 from utils import trimesh_show, fix_unity_urdf_tf, read_tet, \
     interpolate_from_mesh, rotate_mesh
 from sim_w_mix_and_hydration import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain, \
-    cross_visco_StVK_with_Hecky_strain, NeoHookean_VonMise
+    cross_visco_StVK_with_Hecky_strain, NeoHookean_VonMise, hydration_material
 
 
 
@@ -34,13 +34,13 @@ def test_sim():
     stir_folder = './data/stir/'
     cut_folder = './data/cut/cut0001/'
     # flour_material = NeoHookean_VonMise(15, 0.01, 0.45, False)
-    dough_material = visco_StVK_with_Hecky_strain(15, 0.01, 0.7, False)
-
+    # dough_material = visco_StVK_with_Hecky_strain(15, 0.01, 0.7, False)
+    dough_material = hydration_material(13, 0.01, 0.45, 0.7, False)
     flour_par = np.random.rand(10000, 3) * 0.15 * np.array([1, 1, 1])
     flour_par = flour_par - flour_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])
-    flour_color = np.array([0.5, 0.5, 0.5])
+    flour_color = np.array([0.6, 0.6, 0.7])
     flour = SoftBody(
-        flour_par, dough_material, flour_color, 1, 0, 0.9)
+        flour_par, dough_material, flour_color, 1.0, 0.0, 0.9)
     
 
    
@@ -78,7 +78,7 @@ def test_sim():
     water_par = water_par - water_par.mean(axis=0) + cup_pos - np.array([0.5, 0.5, 0.5])
     water_color = np.array([0.45, 0.45, 1])
     water = SoftBody(
-        water_par, water_material, water_color, 1, 0, 0.9)
+        water_par, water_material, water_color, 0.0, 1.0, 0.9)
 
 
     shovel_mesh = trimesh.load_mesh(pjoin(stir_folder, 'shovel_remesh3.obj'))
@@ -95,7 +95,7 @@ def test_sim():
 
     sim = MpmSim(origin=np.asarray([-0.5, ] * 3),
                  dt=dt, ground_friction=0, box_bound_rel=0.1)
-    sim.set_camera_pos(0.5, 0.8, 1)
+    sim.set_camera_pos(0.31, 1, 0.75)
     # sim.set_camera_pos(0.5, 1.3, 1.5)
     sim.camera_lookat(0.5, 0.5, 0.5)
     sim.add_boundary(chopping_board)
@@ -115,10 +115,11 @@ def test_sim():
     obj1_x, obj1_y, obj1_z = 0, 0, 0
     obj1_down = True
     obj1_move_to_right_limit = True
-    stir_limit = 0.063
+    stir_limit = 0.066
     circle_radius = stir_limit
     angle = 0
-    angle_step = 0.0015
+    # angle_step = 0.0015
+    angle_step = 0.0021
     circle_center_x = 0
     circle_center_z = 0
     obj1_y_v = 0.00008
@@ -127,7 +128,7 @@ def test_sim():
     obj2_x, obj2_y, obj2_z = 0, 0, 0
     obj2_up = True
     obj2_move_to_left_limit = True
-    obj2_left_limit = -0.16
+    obj2_left_limit = -0.153
     obj2_pour = True
 
     pour_angle = 0
