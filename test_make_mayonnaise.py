@@ -25,7 +25,7 @@ def test_sim():
     stir_folder = './data/stir/'
     cut_folder = './data/cut/cut0001/'
     oil_material_equilibrated = StVK_with_Hecky_strain(0.25, 0.41, True)
-    oil_material_non_equilibrated = cross_visco_StVK_with_Hecky_strain(0.25, 0.41, 1e-5, 1e-5, 1, 1, True)
+    oil_material_non_equilibrated = cross_visco_StVK_with_Hecky_strain(0.25, 0.41, 10, 10, 1, 1, False)
 
     oil_par = np.random.rand(25000, 3) * 0.15 * np.array([1, 1, 1])
     oil_par = oil_par - oil_par.mean(axis=0) + np.array([0.0, -0.01, 0.0])

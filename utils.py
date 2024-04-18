@@ -70,6 +70,9 @@ def rotate_pos_ti(pos, quat):
     return pos + 2 * (quat[0] * uv + uuv)
 
 
+
+
+
 @ti.func 
 def transform3_pos_ti(pos, trans, quat):
     return rotate_pos_ti(pos, quat) + trans
@@ -78,6 +81,9 @@ def transform3_pos_ti(pos, trans, quat):
 @ti.func
 def inv_transform3_pos_ti(pos, trans, quat):
     return rotate_pos_ti(pos - trans, inv_quat_ti(quat))
+
+
+
 
 
 left_tf = np.empty((4, 4), float)
