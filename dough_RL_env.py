@@ -35,8 +35,8 @@ def test_sim():
     cut_folder = './data/cut/cut0001/'
     # flour_material = NeoHookean_VonMise(15, 0.01, 0.45, False)
     # dough_material = visco_StVK_with_Hecky_strain(15, 0.01, 0.7, False)
-    dough_material = hydration_material(15, 0.01, 0.45, 0.7, False)
-    flour_par = np.random.rand(20000, 3) * 0.15 * np.array([1.1, 1, 0.5])
+    dough_material = hydration_material(25, 0.01, 0.45, 0.7, False)
+    flour_par = np.random.rand(20000, 3) * 0.13 * np.array([1.1, 0.9, 0.5])
     flour_par = flour_par - flour_par.mean(axis=0) + np.array([0.5, 0.45, 0.5])
     flour_color = np.array([0.6, 0.6, 0.7])
     flour = SoftBody(
@@ -62,8 +62,8 @@ def test_sim():
     basin_mesh_lag.vertices *= np.array([1.1, 1, 0.5])
     basin_mesh_lag.vertices += np.array([0.5, 0.44, 0.5]) 
 
-    water_material = NeoHookean(3e-2, 0.45, True)
-    water_par = np.random.rand(15000, 3) * 0.045 * np.array([1, 0.6, 1])
+    water_material = NeoHookean(5e-4, 0.45, True)
+    water_par = np.random.rand(15000, 3) * 0.045 * np.array([1, 0.3, 1])
     water_par = water_par - water_par.mean(axis=0) + np.array([0.5, 0.58, 0.5])
     water_color = np.array([0.45, 0.45, 0.7])
     water = SoftBody(
@@ -82,12 +82,12 @@ def test_sim():
     sim = MpmSim(origin=np.asarray([0, ] * 3),
                  dt=dt, ground_friction=0, box_bound_rel=0.1)
     sim.set_camera_pos(0.31, 1, 0.75)
-    sim.set_camera_pos(1, 0.55, 1.5)
+    # sim.set_camera_pos(1, 0.55, 1.5) # side view
     sim.camera_lookat(0.5, 0.5, 0.5)
     sim.add_boundary(chopping_board)
     sim.add_boundary(shovel)
 
-    sim.add_lag_body(basin_mesh_lag, 3e7, 0.1)
+    sim.add_lag_body(basin_mesh_lag, 1e8, 0.1)
 
 
 
@@ -112,7 +112,7 @@ def test_sim():
     dig_pos = 0.078
  
     lift_height = -0.130
-    stir_depth = -0.225
+    stir_depth = -0.205
 
     obj1_y_v = 0.00015
     obj1_x_v = 0.00015
@@ -199,7 +199,7 @@ def test_sim():
             sim.show()
             frame += 1
         if valve <= 0.62:
-            valve += 0.005
+            valve += 0.003
 
 
 if __name__ == "__main__":

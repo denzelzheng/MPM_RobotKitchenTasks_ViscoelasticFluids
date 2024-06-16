@@ -543,11 +543,17 @@ class MpmSim:
         self.ground_friction = ground_friction
         self.reset()
 
+
+
         # TODO: align these parameters in the future
         self.default_p_vol = (self.dx * 0.5)**2
         self.rp_rho = 1e5
         self.rp_vol = self.default_p_vol
         self.rp_mass = self.rp_vol * self.rp_rho
+
+
+        # TODO:  HARD CODE
+        self.bounds_par_mass = self.rp_mass * 1e-3
 
         self.coloring_mixing_alpha = 0.0
         self.p_c_L1_distanchydrating_efficacyriterion = 0.2  # assess phases mixing uniformity
@@ -976,6 +982,38 @@ class MpmSim:
                             self.rp_mass * self.v_lag[p] - 
                             self.dt * self.x_lag.grad[p] + affine @ dpos)
                         self.grid_m[position] += weight * self.rp_mass
+    
+
+
+        if ti.static(self.n_dynamic_bounds > 0):
+                    for i in ti.static(range(self.n_dynamic_bounds)):
+                        if ti.static(self.dynamic_bounds[i].collide_type in ["grid"]):
+                            for p in self.dynamic_bounds[i].vertices:
+                                tmp_x = self.dynamic_bounds[i].vertices[p]
+                                new_x = ti.cast(
+                                    transform3_pos_ti(self.dynamic_bounds[i].init_vertices[p]-self.dynamic_bounds[i].initial_center[None], 
+                                                      self.dynamic_bounds[i].pos[None], self.dynamic_bounds[i].quat[None])
+                                                      + self.dynamic_bounds[i].initial_center[None], 
+                                                      self.dynamic_bounds[i].vertices.dtype)
+                                bounds_v = (new_x - tmp_x) / self.dt
+
+                                base = ti.cast(tmp_x * self.inv_dx - 0.5, ti.i32)
+                                fx = tmp_x * self.inv_dx - ti.cast(base, float)
+                                w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1)
+                                    ** 2, 0.5 * (fx - 0.5) ** 2]
+                                # affine = self.rp_mass * self.C_lag[p]
+                                for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
+                                    # Loop over 3x3 grid node neighborhood
+                                    offset = ti.Vector([i, j, k])
+                                    position = base + offset
+                                    dpos = (offset.cast(float) - fx) * self.dx
+                                    weight = w[i][0] * w[j][1] * w[k][2]
+                                    self.grid_v[position] += weight * \
+                                        (self.bounds_par_mass * bounds_v
+                                        #  + affine @ dpos
+                                         )
+                                    self.grid_m[position] += weight * self.bounds_par_mass
+
 
     @ti.kernel
     def grid_op(self):
@@ -1111,7 +1149,8 @@ class MpmSim:
                     weight = w[i][0] * w[j][1] * w[k][2]
                     new_v += weight * g_v
                     new_C += 4 * self.inv_dx * weight * g_v.outer_product(dpos)
-                self.v_lag[p], self.C_lag[p] = new_v, new_C
+                # self.v_lag[p] = new_v
+                self.C_lag[p] = new_C
                 # self.x_lag[p] += self.v_lag[p] * self.dt
 
 
