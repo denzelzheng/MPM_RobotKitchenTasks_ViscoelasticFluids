@@ -35,7 +35,7 @@ def test_sim():
     cut_folder = './data/cut/cut0001/'
     # flour_material = NeoHookean_VonMise(15, 0.01, 0.45, False)
     # dough_material = visco_StVK_with_Hecky_strain(15, 0.01, 0.7, False)
-    dough_material = hydration_material(25, 0.01, 0.45, 0.7, False)
+    dough_material = hydration_material(1500, 0.01, 0.45, 3, False)
     flour_par = np.random.rand(20000, 3) * 0.13 * np.array([1.1, 0.9, 0.5])
     flour_par = flour_par - flour_par.mean(axis=0) + np.array([0.5, 0.45, 0.5])
     flour_color = np.array([0.6, 0.6, 0.7])
@@ -62,8 +62,8 @@ def test_sim():
     basin_mesh_lag.vertices *= np.array([1.1, 1, 0.5])
     basin_mesh_lag.vertices += np.array([0.5, 0.44, 0.5]) 
 
-    water_material = NeoHookean(5e-4, 0.45, True)
-    water_par = np.random.rand(15000, 3) * 0.045 * np.array([1, 0.3, 1])
+    water_material = NeoHookean(5e-6, 0.45, True)
+    water_par = np.random.rand(15000, 3) * 0.045 * np.array([1.3, 0.25, 1.3])
     water_par = water_par - water_par.mean(axis=0) + np.array([0.5, 0.58, 0.5])
     water_color = np.array([0.45, 0.45, 0.7])
     water = SoftBody(
@@ -72,9 +72,9 @@ def test_sim():
 
     shovel_mesh = trimesh.load_mesh(pjoin(stir_folder, 'shovel_remesh3.obj'))
     shovel_mesh.vertices += -shovel_mesh.vertices.mean(axis=0) # type: ignore
-    shovel_mesh.vertices *= 1.5
     shovel_mesh.vertices = rotate_mesh(shovel_mesh.vertices, 'x', -90)
-    shovel_mesh.vertices = rotate_mesh(shovel_mesh.vertices, 'y', -45)
+    shovel_mesh.vertices = rotate_mesh(shovel_mesh.vertices, 'y', -90)
+    shovel_mesh.vertices *= np.array([1.5, 1.5, 1.8])
     shovel_pos = np.array([0.5, 0.75, 0.5])
     shovel_mesh.vertices += shovel_pos
     shovel = DynamicBoundary(mesh=shovel_mesh, collide_type="both")
@@ -199,7 +199,7 @@ def test_sim():
             sim.show()
             frame += 1
         if valve <= 0.62:
-            valve += 0.003
+            valve += 0.0015
 
 
 if __name__ == "__main__":
