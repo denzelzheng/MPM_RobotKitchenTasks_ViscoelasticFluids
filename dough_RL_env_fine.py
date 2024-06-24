@@ -39,7 +39,7 @@ def test_sim():
     # flour_material = NeoHookean_VonMise(15, 0.01, 0.45, False)
     # dough_material = visco_StVK_with_Hecky_strain(15, 0.01, 0.7, False)
 
-    dough_material = hydration_material(1500, 0.01, 0.15, 6500, 2.5, False)
+    dough_material = hydration_material(1500, 0.01, 0.15, 6800, 2.5, False)
     flour_par = np.random.rand(15000, 3) * 0.13 * np.array([1.1, 0.37, 0.5]) * scale
     flour_par = flour_par - flour_par.mean(axis=0) + np.array([0.5, 0.47, 0.5])
     flour_color = np.array([0.6, 0.6, 0.7])
