@@ -1,5 +1,3 @@
-
-
 import os
 import taichi as ti
 from config import mano_urdf_path, points_data_path
@@ -30,15 +28,20 @@ def thicken_mesh(mesh, thickness):
 def test_sim():
     ti.init(arch=ti.cuda)
     dt = 1e-4
+    n_grids = 128
+
     substeps = 5
+
+    scale = 1.05
 
     stir_folder = './data/stir/'
     cut_folder = './data/cut/cut0001/'
     # flour_material = NeoHookean_VonMise(15, 0.01, 0.45, False)
     # dough_material = visco_StVK_with_Hecky_strain(15, 0.01, 0.7, False)
-    dough_material = hydration_material(1500, 0.01, 0.45, 6500, 3, False)
-    flour_par = np.random.rand(20000, 3) * 0.13 * np.array([1.1, 0.9, 0.5])
-    flour_par = flour_par - flour_par.mean(axis=0) + np.array([0.5, 0.45, 0.5])
+
+    dough_material = hydration_material(1500, 0.01, 0.15, 6500, 2.5, False)
+    flour_par = np.random.rand(15000, 3) * 0.13 * np.array([1.1, 0.37, 0.5]) * scale
+    flour_par = flour_par - flour_par.mean(axis=0) + np.array([0.5, 0.47, 0.5])
     flour_color = np.array([0.6, 0.6, 0.7])
     flour = SoftBody(
         flour_par, dough_material, flour_color, 1.0, 0.0, 0.9)
@@ -46,6 +49,7 @@ def test_sim():
 
     chopping_board_mesh = trimesh.load_mesh(
         pjoin(cut_folder, 'chopping_board.obj'))
+    chopping_board_mesh.vertices *= scale
     # chopping_board_mesh.vertices += -chopping_board_mesh.vertices.mean(axis=0)
     chopping_board_mesh.vertices += np.array([0.5, 0.40, 0.5])
     # chopping_board = StaticBoundary(mesh=chopping_board_mesh)
@@ -58,12 +62,13 @@ def test_sim():
     basin_mesh_lag = trimesh.load_mesh(pjoin(stir_folder, 'box_remesh1.obj'))
     basin_mesh_lag.vertices = basin_mesh_lag.vertices - \
         basin_mesh_lag.vertices.mean(axis=0)
-    basin_mesh_lag.vertices *= np.array([0.95, 1, 0.5])
-    basin_mesh_lag.vertices += np.array([0.5, 0.44, 0.5]) 
+    basin_mesh_lag.vertices *= np.array([0.95, 1.2, 0.5]) * scale
+    basin_mesh_lag.vertices += np.array([0.5, 0.45, 0.5]) 
 
     water_material = NeoHookean(5e-6, 0.45, True)
     water_par = np.random.rand(10000, 3) * 0.045 * np.array([1.6, 0.25, 1.3])
-    water_par = water_par - water_par.mean(axis=0) + np.array([0.5, 0.58, 0.5])
+    water_par = water_par - water_par.mean(axis=0)  * scale
+    water_par += np.array([0.5, 0.58, 0.5])
     water_color = np.array([0.45, 0.45, 0.7])
     water = SoftBody(
         water_par, water_material, water_color, 0.0, 1.0, 0.9)
@@ -71,6 +76,7 @@ def test_sim():
 
     shovel_mesh = trimesh.load_mesh(pjoin(stir_folder, 'shovel_remesh3.obj'))
     shovel_mesh.vertices += -shovel_mesh.vertices.mean(axis=0) # type: ignore
+    shovel_mesh.vertices *= scale
     shovel_mesh.vertices = rotate_mesh(shovel_mesh.vertices, 'x', -90)
     shovel_mesh.vertices = rotate_mesh(shovel_mesh.vertices, 'y', -90)
     shovel_mesh.vertices *= np.array([1.5, 1.5, 1.8])
@@ -79,7 +85,7 @@ def test_sim():
     shovel = DynamicBoundary(mesh=shovel_mesh, collide_type="both")
 
     sim = MpmSim(origin=np.asarray([0, ] * 3),
-                 dt=dt, ground_friction=0, box_bound_rel=0.1)
+                 dt=dt, ground_friction=0, box_bound_rel=0.1, n_grids=n_grids)
     sim.set_camera_pos(0.31, 1, 0.75)
     # sim.set_camera_pos(1, 0.55, 1.5) # side view
     sim.camera_lookat(0.5, 0.5, 0.5)
@@ -107,13 +113,13 @@ def test_sim():
     obj1_left = False
     obj1_in_work_zone = False
 
-    push_pos = 0.036
-    dig_pos = 0.078
+    push_pos = 0.055
+    dig_pos = 0.098
  
-    lift_height = -0.130
-    stir_depth = -0.205
+    lift_height = -0.065
+    stir_depth = -0.185
 
-    obj1_y_v = 0.00015
+    obj1_y_v = 0.0003
     obj1_x_v = 0.00015
 
     obj2_x, obj2_y, obj2_z = 0, 0, 0

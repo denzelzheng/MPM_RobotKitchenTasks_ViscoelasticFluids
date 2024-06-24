@@ -73,6 +73,8 @@ class NeoHookean(Material):
         
     @ti.func
     def compute_kirchhoff_stress(self, F, dt, C, hydration):
+
+        
         U, sig, V = ti.svd(F)
         J = F.determinant()
         if self.fluid:
@@ -120,9 +122,11 @@ class NeoHookean_VonMise(Material):
 
 
 class hydration_material(Material):
-    def __init__(self, E: float = 5e3, nu: float = 0.2, yield_stress: float = 1e3, viscosity_v: float = 1, fluid: bool = False) -> None:
+    def __init__(self, E: float = 5e3, nu: float = 0.2, yield_stress: float = 1e3, E_hydration: float = 5e3, viscosity_v: float = 1, fluid: bool = False) -> None:
         super().__init__()
         self.mu, self.lam = E / (2 * (1 + nu)), E * \
+            nu / ((1+nu) * (1 - 2 * nu))
+        self.mu_hydration, self.lam_hydration = E_hydration / (2 * (1 + nu)), E_hydration * \
             nu / ((1+nu) * (1 - 2 * nu))
         self.fluid = fluid
         self.viscosity_v = viscosity_v
@@ -163,8 +167,8 @@ class hydration_material(Material):
             new_viscosity_d = self.viscosity_d
 
             epsilon = ti.Vector([ti.log(sig[0, 0]), ti.log(sig[1, 1]), ti.log(sig[2, 2])])
-            alpha = 2.0 * self.mu / new_viscosity_d
-            beta = 2.0 * (2.0 * self.mu + self.lam * 3) / (9.0 * new_viscosity_v) - 2.0 * self.mu / (new_viscosity_d * 3)
+            alpha = 2.0 * self.mu_hydration / new_viscosity_d
+            beta = 2.0 * (2.0 * self.mu_hydration + self.lam_hydration * 3) / (9.0 * new_viscosity_v) - 2.0 * self.mu_hydration / (new_viscosity_d * 3)
             A = 1 / (1 + dt * alpha)
             B = dt * beta / (1 + dt * (alpha + 3 * beta))
             epsilon_trace = ti.log(sig[0, 0]) + ti.log(sig[1, 1]) + ti.log(sig[2, 2])
@@ -172,7 +176,7 @@ class hydration_material(Material):
             d = ti.exp(temp_epsilon)
             new_sig = ti.Matrix([[d[0], 0.0, 0.0], [0.0, d[1], 0.0], [0.0, 0.0, d[2]]])
             F = U @ new_sig @ V.transpose()
-            P_hat = compute_P_hat(new_sig, self.mu, self.lam)
+            P_hat = compute_P_hat(new_sig, self.mu_hydration, self.lam_hydration)
             P = U @ ti.Matrix([[P_hat[0], 0.0, 0.0], [0.0, P_hat[1], 0.0], [0.0, 0.0, P_hat[2]]]) @ V.transpose()
             kirchhoff_stress = P @ F.transpose()
             
@@ -209,7 +213,7 @@ class visco_StVK_with_Hecky_strain(Material):
         self.mu, self.lam = E / (2 * (1 + nu)), E * \
             nu / ((1+nu) * (1 - 2 * nu))
         self.viscosity_v = viscosity_v
-        self.viscosity_d = viscosity_v  # 假设体积粘度与偏差粘度相同
+        self.viscosity_d = viscosity_v
         self.fluid = fluid
     
     @ti.func
@@ -880,10 +884,11 @@ class MpmSim:
                 x_color_by_body_id[body_id] = np_x_color[mask]
                 p_vol_by_body_id[body_id] = np_p_vol[mask]
 
-                tmp_radius = (p_vol_by_body_id[body_id][0] / self.default_p_vol) ** (1/3) * default_radius
-                tmp_radius = float(round(tmp_radius, 3))
-                if tmp_radius < 0.002: # bug of taichi ti.ui.Scene().particles()
-                    tmp_radius = 0.002
+                # tmp_radius = (p_vol_by_body_id[body_id][0] / self.default_p_vol) ** (1/3) * default_radius
+                # tmp_radius = float(round(tmp_radius, 3))
+                # if tmp_radius < 0.002: # bug of taichi ti.ui.Scene().particles()
+                #     tmp_radius = 0.002
+                tmp_radius = 0.002
                 self.body_x[body_id].from_numpy(np_x[mask])
                 self.body_x_color[body_id].from_numpy(np_x_color[mask])
                 self.scene.particles(self.body_x[body_id], per_vertex_color=self.body_x_color[body_id], radius=tmp_radius)
