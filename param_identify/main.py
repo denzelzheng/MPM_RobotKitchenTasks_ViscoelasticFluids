@@ -6,7 +6,7 @@ from data_utils import preprocess_point_clouds, preprocess_mechanical_data
 from visualize import visualize_3d_point_clouds
 from simulation import ParticleSystem
 
-E = 1e5
+E = 1e2
 nu = 0.1
 yield_stress = 1e6
 visco = 0.1

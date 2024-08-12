@@ -1,5 +1,7 @@
 import numpy as np
 from scipy.spatial import cKDTree
+from sklearn.neighbors import NearestNeighbors
+from scipy.spatial import ConvexHull
 
 class AdaptiveParticleModel:
     def __init__(self, center, n_particles=5000, length=1.0, width=0.8, height=0.6):
@@ -150,3 +152,69 @@ class AdaptiveParticleModel:
         self.particles = self.particles[indices]
         
         return self.particles
+    
+
+import numpy as np
+from scipy.spatial import ConvexHull
+
+class SurfaceToParticleModel:
+    def __init__(self, bottom_thickness=0.1, particle_count=1000):
+        self.bottom_thickness = bottom_thickness
+        self.particle_count = particle_count
+
+    def convert(self, surface_points):
+        # 计算边界框（bbox）
+        bbox_min = np.min(surface_points, axis=0)
+        bbox_max = np.max(surface_points, axis=0)
+        
+        # 计算点云密度
+        hull = ConvexHull(surface_points[:, [0, 2]])  # 使用x和z坐标计算凸包
+        surface_area = hull.area
+        point_density = len(surface_points) / surface_area
+
+        print(f"Surface area: {surface_area}, Point density: {point_density}")
+
+        # 找到最底部的点并创建底面
+        bottom_y = bbox_min[1]
+        bottom_plane_y = bottom_y - self.bottom_thickness
+
+        # 为每个点创建随机插值粒子
+        interpolated_particles = []
+        for point in surface_points:
+            distance_to_bottom = point[1] - bottom_plane_y
+            volume = distance_to_bottom * (1 / point_density)  # 假设每个点代表的体积
+            num_particles = max(1, int(volume * point_density * 1.5))  # 确保至少生成1个粒子
+            
+            for _ in range(num_particles):
+                random_y = np.random.uniform(bottom_plane_y, point[1])
+                random_x = np.random.normal(point[0], self.bottom_thickness / 2)
+                random_z = np.random.normal(point[2], self.bottom_thickness / 2)
+                interpolated_particle = [random_x, random_y, random_z]
+                interpolated_particles.append(interpolated_particle)
+
+        print(f"Number of interpolated particles: {len(interpolated_particles)}")
+
+        # 合并原始表面点和插值粒子
+        if len(interpolated_particles) > 0:
+            all_particles = np.vstack([surface_points, np.array(interpolated_particles)])
+        else:
+            all_particles = surface_points
+
+        # 随机采样 particle_count 个粒子
+        if len(all_particles) > self.particle_count:
+            sampled_indices = np.random.choice(len(all_particles), self.particle_count, replace=False)
+            particle_model = all_particles[sampled_indices]
+        else:
+            particle_model = all_particles
+
+        print(f"Final particle model shape: {particle_model.shape}")
+
+        return particle_model
+
+    def update_parameters(self, surface_points, bottom_thickness=None, particle_count=None):
+        if bottom_thickness is not None:
+            self.bottom_thickness = bottom_thickness
+        if particle_count is not None:
+            self.particle_count = particle_count
+        
+        return self.convert(surface_points)

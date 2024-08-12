@@ -1,15 +1,16 @@
 import taichi as ti
+import math
 
 
 
 ti.init(arch=ti.cuda, device_memory_GB=8)
 
 total_mass = 1
-tool_total_mass = 0.5
+tool_total_mass = 0.1
 density = 500
 
-visco_lower_bound = 0.01
-visco_upper_bound = 10
+visco_lower_bound = 1e-1
+visco_upper_bound = 1e6
 
 gravity = 9.81
 dim = 3
@@ -28,6 +29,9 @@ class ParticleSystem:
         self.p_vol = self.p_mass / density
         self.tool_p_mass = tool_total_mass / n_tool_particles
         self.max_steps = max_steps
+
+        self.visco_lower_bound = visco_lower_bound
+        self.visco_upper_bound = visco_upper_bound
 
 
         self.container_width = container_width
@@ -415,27 +419,28 @@ class ParticleSystem:
             y_max = 0.5 + self.container_height
 
             # Check if the point is inside the container (hole)
-            in_container = (x_min <= x <= x_max and
-                            z_min <= z <= z_max and
-                            y_min <= y <= y_max )
+            in_container = (y_min <= y <= y_max)
 
             if in_container:
-                # Bottom of the container
-                if y < y_min and v_out[1] < 0:
+
+                # x direction (width)
+                if x < x_min and v_out[0] < 0:
+                    v_out[0] = 0                    
+                    v_out[1] = 0
+                    v_out[2] = 0
+                if x > x_max and v_out[0] > 0:
                     v_out[0] = 0
                     v_out[1] = 0
                     v_out[2] = 0
 
-                # x direction (width)
-                if x < x_min and v_out[0] < 0:
-                    v_out[0] = 0
-                if x > x_max and v_out[0] > 0:
-                    v_out[0] = 0
-
                 # z direction (depth)
                 if z < z_min and v_out[2] < 0:
+                    v_out[0] = 0
+                    v_out[1] = 0
                     v_out[2] = 0
                 if z > z_max and v_out[2] > 0:
+                    v_out[0] = 0
+                    v_out[1] = 0
                     v_out[2] = 0
 
             else:
@@ -534,6 +539,88 @@ class ParticleSystem:
 
 
 
+    # def initialize_optimizer(self, optimizer_type):
+    #     if optimizer_type == 'adam':
+    #         self.adam_m = ti.field(ti.f32, shape=())
+    #         self.adam_v = ti.field(ti.f32, shape=())
+    #         self.adam_m[None] = 0
+    #         self.adam_v[None] = 0
+    #     elif optimizer_type == 'sgd':
+    #         self.sgd_momentum = ti.field(ti.f32, shape=())
+    #         self.sgd_momentum[None] = 0
+    #     self.visco_lower_bound = visco_lower_bound
+    #     self.visco_upper_bound = visco_upper_bound
+
+    # @ti.func
+    # def adam_update(self, t, g, m, v, alpha, beta1, beta2, eps):
+    #     m = beta1 * m + (1 - beta1) * g
+    #     v = beta2 * v + (1 - beta2) * g * g
+    #     m_hat = m / (1 - beta1 ** (t + 1))
+    #     v_hat = v / (1 - beta2 ** (t + 1))
+    #     update = alpha * m_hat / (ti.sqrt(v_hat) + eps)
+    #     return update, m, v
+
+    # @ti.kernel
+    # def adam_step(self, t: ti.i32, alpha: ti.f32, beta1: ti.f32, beta2: ti.f32, eps: ti.f32):
+    #     g = self.viscosity.grad[None]
+    #     update, self.adam_m[None], self.adam_v[None] = self.adam_update(t, g, self.adam_m[None], self.adam_v[None], alpha, beta1, beta2, eps)
+    #     self.viscosity[None] -= update
+    #     self.viscosity[None] = ti.max(self.visco_lower_bound, ti.min(self.viscosity[None], self.visco_upper_bound))
+
+    # @ti.kernel
+    # def sgd_step(self, learning_rate: ti.f32, momentum: ti.f32):
+    #     self.sgd_momentum[None] = momentum * self.sgd_momentum[None] + learning_rate * self.viscosity.grad[None]
+    #     self.viscosity[None] -= self.sgd_momentum[None]
+    #     self.viscosity[None] = ti.max(self.visco_lower_bound, ti.min(self.viscosity[None], self.visco_upper_bound))
+    
+    
+    # def optimize_viscosity(self, num_iterations, end_step, optimizer_type='adam', **kwargs):
+    #     self.initialize_optimizer(optimizer_type)
+
+    #     if optimizer_type == 'adam':
+    #         alpha = kwargs.get('alpha', 0.001)
+    #         beta1 = kwargs.get('beta1', 0.9)
+    #         beta2 = kwargs.get('beta2', 0.999)
+    #         eps = kwargs.get('eps', 1e-8)
+    #     elif optimizer_type == 'sgd':
+    #         learning_rate = kwargs.get('learning_rate', 0.01)
+    #         momentum = kwargs.get('momentum', 0.9)
+
+    #     best_loss = float('inf')
+    #     best_viscosity = self.viscosity[None]
+
+    #     for iteration in range(num_iterations):
+    #         loss = self.run_simulation(end_step)
+
+    #         print(f"Iteration {iteration + 1}/{num_iterations}")
+    #         print(f"Loss: {loss}")
+    #         print(f"Current viscosity: {self.viscosity[None]}")
+
+    #         # Update best loss and viscosity if current loss is lower
+    #         if loss < best_loss:
+    #             best_loss = loss
+    #             best_viscosity = self.viscosity[None]
+
+            
+    #         if optimizer_type == 'adam':
+    #             self.adam_step(iteration, alpha, beta1, beta2, eps)
+    #         elif optimizer_type == 'sgd':
+    #             self.sgd_step(learning_rate, momentum)
+    #     print(f"Optimization completed.")
+
+    #     # Set the viscosity to the best found value
+    #     self.viscosity[None] = best_viscosity
+
+    #     # Run the simulation again with the best viscosity
+    #     final_loss = self.run_simulation(end_step)
+
+    #     print(f"Final simulation run with best viscosity:")
+    #     print(f"Final loss: {final_loss}")
+    #     print(f"Final viscosity: {self.viscosity[None]}")
+
+    #     return best_viscosity, final_loss
+
+
     def initialize_optimizer(self, optimizer_type):
         if optimizer_type == 'adam':
             self.adam_m = ti.field(ti.f32, shape=())
@@ -543,8 +630,13 @@ class ParticleSystem:
         elif optimizer_type == 'sgd':
             self.sgd_momentum = ti.field(ti.f32, shape=())
             self.sgd_momentum[None] = 0
-        self.visco_lower_bound = visco_lower_bound
-        self.visco_upper_bound = visco_upper_bound
+        elif optimizer_type == 'eebo':
+            self.eebo_exploration_rate = ti.field(ti.f32, shape=())
+            self.eebo_exploration_rate[None] = 0.5
+            self.eebo_best_value = ti.field(ti.f32, shape=())
+            self.eebo_best_value[None] = self.viscosity[None]
+            self.eebo_best_loss = ti.field(ti.f32, shape=())
+            self.eebo_best_loss[None] = float('inf')
 
     @ti.func
     def adam_update(self, t, g, m, v, alpha, beta1, beta2, eps):
@@ -567,8 +659,37 @@ class ParticleSystem:
         self.sgd_momentum[None] = momentum * self.sgd_momentum[None] + learning_rate * self.viscosity.grad[None]
         self.viscosity[None] -= self.sgd_momentum[None]
         self.viscosity[None] = ti.max(self.visco_lower_bound, ti.min(self.viscosity[None], self.visco_upper_bound))
-    
-    
+
+    @ti.func
+    def sample_log_uniform(self, lower, upper):
+        log_lower = ti.log(lower)
+        log_upper = ti.log(upper)
+        return ti.exp(ti.random(ti.f32) * (log_upper - log_lower) + log_lower)
+
+    @ti.kernel
+    def eebo_step(self, decay_rate: ti.f32):
+        if ti.random(ti.f32) < self.eebo_exploration_rate[None]:
+            # Explore: sample a new value from the entire range
+            self.viscosity[None] = self.sample_log_uniform(self.visco_lower_bound, self.visco_upper_bound)
+        else:
+            # Exploit: sample a new value near the best known value
+            log_best = ti.log(self.eebo_best_value[None])
+            log_range = ti.log(self.visco_upper_bound / self.visco_lower_bound)
+            local_lower = ti.exp(log_best - 0.1 * log_range)
+            local_upper = ti.exp(log_best + 0.1 * log_range)
+            self.viscosity[None] = self.sample_log_uniform(
+                ti.max(local_lower, self.visco_lower_bound),
+                ti.min(local_upper, self.visco_upper_bound)
+            )
+        # Decay exploration rate
+        self.eebo_exploration_rate[None] *= decay_rate
+
+    @ti.kernel
+    def eebo_update_best(self, loss: ti.f32):
+        if loss < self.eebo_best_loss[None]:
+            self.eebo_best_loss[None] = loss
+            self.eebo_best_value[None] = self.viscosity[None]
+
     def optimize_viscosity(self, num_iterations, end_step, optimizer_type='adam', **kwargs):
         self.initialize_optimizer(optimizer_type)
 
@@ -580,27 +701,34 @@ class ParticleSystem:
         elif optimizer_type == 'sgd':
             learning_rate = kwargs.get('learning_rate', 0.01)
             momentum = kwargs.get('momentum', 0.9)
+        elif optimizer_type == 'eebo':
+            decay_rate = kwargs.get('decay_rate', 0.99)
 
         best_loss = float('inf')
         best_viscosity = self.viscosity[None]
 
         for iteration in range(num_iterations):
+            if optimizer_type == 'eebo':
+                self.eebo_step(decay_rate)
+            
             loss = self.run_simulation(end_step)
 
             print(f"Iteration {iteration + 1}/{num_iterations}")
             print(f"Loss: {loss}")
             print(f"Current viscosity: {self.viscosity[None]}")
 
-            # Update best loss and viscosity if current loss is lower
             if loss < best_loss:
                 best_loss = loss
                 best_viscosity = self.viscosity[None]
 
-            
             if optimizer_type == 'adam':
                 self.adam_step(iteration, alpha, beta1, beta2, eps)
             elif optimizer_type == 'sgd':
                 self.sgd_step(learning_rate, momentum)
+            elif optimizer_type == 'eebo':
+                self.eebo_update_best(loss)
+                print(f"Exploration rate: {self.eebo_exploration_rate[None]}")
+
         print(f"Optimization completed.")
 
         # Set the viscosity to the best found value
@@ -614,4 +742,3 @@ class ParticleSystem:
         print(f"Final viscosity: {self.viscosity[None]}")
 
         return best_viscosity, final_loss
-

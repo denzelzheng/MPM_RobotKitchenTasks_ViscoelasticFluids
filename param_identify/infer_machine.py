@@ -4,19 +4,19 @@ import os
 from data_utils import preprocess_point_clouds, preprocess_mechanical_data
 from visualize import visualize_3d_point_clouds
 from simulation import ParticleSystem
-from adaptive_particle_model import AdaptiveParticleModel
+from adaptive_particle_model import AdaptiveParticleModel, SurfaceToParticleModel
 import open3d as o3d
 
 VISUALIZE_MODE = 1
 
-E = 1e5
-nu = 0.1
-yield_stress = 1e6
-visco = 0.1
+E = 1e3
+nu = 0.4
+yield_stress = 100
+visco = 1e-0
 end_step = 2048
 
-num_iterations = 5
-learning_rate = 1e-19
+num_iterations = 10
+learning_rate = 1e-3
 
 current_file_path = os.path.abspath(__file__)
 current_directory = os.path.dirname(current_file_path)
@@ -44,24 +44,31 @@ class MainStateMachine:
         self.tool_force_path = os.path.join(current_directory, "tool_force.npy")
 
 
-        np.save(self.tool_traj_path, np.array([[0.5, 0.65, 0.3], [0.3, 0.65, 0.6]]))
+        np.save(self.tool_traj_path, np.array([[0.5, 0.7, 0.4], [0.5, 0.7, 0.6]]))
+        np.save(self.tool_force_path, np.array([0.05, 0.1, 0.05]))
+
 
     def process_surface_data(self):
         print("Processing surface data...")
-        self.particle_model = AdaptiveParticleModel(np.array([0.0, 0.0, 0.0]), n_particles=5000, length=container_width, width=material_height, height=container_length)
-        
+
         initial_surface = np.array(o3d.io.read_point_cloud(self.initial_surface_path).points)
-        indices = np.random.choice(initial_surface.shape[0], size=1000, replace=False)
+        indices = np.random.choice(initial_surface.shape[0], size=2000, replace=False)
         initial_surface = initial_surface[indices]
 
         final_surface = np.array(o3d.io.read_point_cloud(self.final_surface_path).points)
-        indices = np.random.choice(final_surface.shape[0], size=1000, replace=False)
+        indices = np.random.choice(final_surface.shape[0], size=2000, replace=False)
         final_surface = final_surface[indices]
 
-        print(np.array(initial_surface).shape)
+        # self.particle_model = AdaptiveParticleModel(np.array([0.0, 0.0, 0.0]), n_particles=5000, length=container_width, width=material_height, height=container_length)
+        # initial_particles = self.particle_model.update_model(initial_surface, True)
+        # final_particles = self.particle_model.update_model(final_surface, True)
 
-        initial_particles = self.particle_model.update_model(initial_surface, True)
-        final_particles = self.particle_model.update_model(final_surface, True)
+        self.particle_model = SurfaceToParticleModel(bottom_thickness=material_height, particle_count=5000)
+        initial_particles = self.particle_model.convert(initial_surface)
+        final_particles = self.particle_model.convert(final_surface)
+
+
+
 
         # Save updated particle models
         initial_particles_pcd = o3d.geometry.PointCloud()
@@ -79,16 +86,13 @@ class MainStateMachine:
 
         # Process mechanical data
         tool_traj_sequence, tool_force_sequence = preprocess_mechanical_data(self.tool_traj_path, self.tool_force_path, end_step)
-
-        print(tool_traj_sequence)
-
        
         self.process_surface_data()
 
         # Process particle model point clouds
         initial_particles, final_particles = preprocess_point_clouds(self.initial_cloud_path, self.final_cloud_path, self.align_method)
-        initial_particles = initial_particles + np.array([0.5, 0.5, 0.5])
-        final_particles = final_particles + np.array([0.5, 0.5, 0.5])
+        initial_particles = initial_particles + np.array([0.5, 0.5, 0.5], np.float32)
+        final_particles = final_particles + np.array([0.5, 0.5, 0.5], np.float32)
         tool_particles = preprocess_point_clouds(self.tool_cloud_path, None, self.align_method)[0] + tool_traj_sequence[0]
 
         if initial_particles is None or final_particles is None:
@@ -110,7 +114,7 @@ class MainStateMachine:
         print("Particle system initialized")
 
         # Run optimization
-        best_viscosity, final_loss = self.particle_system.optimize_viscosity(num_iterations, end_step, optimizer_type='sgd', learning_rate=learning_rate, momentum=0.9)
+        best_viscosity, final_loss = self.particle_system.optimize_viscosity(num_iterations, end_step, optimizer_type='eebo', learning_rate=learning_rate, momentum=0.9)
         particles_np, tool_particles_np = self.particle_system.export_deformation()
 
         if VISUALIZE_MODE:
@@ -123,13 +127,15 @@ def main(align_method='kdtree'):
     state_machine = MainStateMachine(align_method)
     
     while True:
-        command = input("Enter command (infer/quit): ").lower()
-        if command == "quit":
-            break
-        elif command == "infer":
-            state_machine.infer()
-        else:
-            print(f"Unknown command: {command}")
+        state_machine.infer()
+
+        # command = input("Enter command (infer/quit): ").lower()
+        # if command == "quit":
+        #     break
+        # elif command == "infer":
+        #     state_machine.infer()
+        # else:
+        #     print(f"Unknown command: {command}")
 
 if __name__ == "__main__":
     import sys

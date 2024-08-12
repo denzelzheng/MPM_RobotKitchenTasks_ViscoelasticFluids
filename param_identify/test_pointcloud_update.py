@@ -1,13 +1,21 @@
 # main.py
 
+
 import numpy as np
 import plotly.graph_objects as go
-from adaptive_particle_model import AdaptiveParticleModel
+from adaptive_particle_model import AdaptiveParticleModel, SurfaceToParticleModel
 import os
 
-current_file_path = os.path.abspath(__file__)
-current_directory = os.path.dirname(current_file_path)
+surface_points = np.random.rand(1000, 3)
 
+# 创建转换器实例
+converter = SurfaceToParticleModel(bottom_thickness=0.1, particle_count=2000)
+
+# 转换表面点云到粒子模型
+particle_model = converter.convert(surface_points)
+
+# 如果需要更新参数，可以使用 update_parameters 方法
+particle_model = converter.update_parameters(surface_points, bottom_thickness=0.2, particle_count=3000)
 def generate_single_side_surface(n_points, length, width):
     """生成单侧的不规则表面点云"""
     x = np.random.rand(n_points) * length
@@ -37,19 +45,20 @@ if __name__ == "__main__":
     length, width, height = 1.0, 0.8, 0.6
 
     # 初始化粒子模型
-    model = AdaptiveParticleModel(np.array([0.0, 0.0, 0.0]), n_particles=5000, length=length, width=width, height=height)
+    model = SurfaceToParticleModel(bottom_thickness=0.1, particle_count=2000)
 
     # 生成初始的不规则表面点云
     initial_surface = generate_single_side_surface(100, length, width)
 
     # 更新模型以适应初始表面
-    updated_particles = model.update_model(initial_surface)
+    updated_particles = model.convert(initial_surface)
 
     # 可视化结果
     visualize_particles(updated_particles, initial_surface, "Initial Adaptation")
 
     # 模拟接收新的表面点云并更新模型
-    for i in range(3):  # 模拟3次更新
-        new_surface = generate_single_side_surface(100, length, width)
-        updated_particles = model.update_model(new_surface, True)
+    for i in range(2):  # 模拟3次更新
+        new_surface = generate_single_side_surface(1000, length, width)
+        updated_particles = model.convert(new_surface)
+
         visualize_particles(updated_particles, new_surface, f"Update {i+1}")
