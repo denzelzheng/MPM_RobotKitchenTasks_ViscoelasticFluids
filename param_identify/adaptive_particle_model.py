@@ -13,7 +13,8 @@ class AdaptiveParticleModel:
 
     def _initialize_cuboid_particles(self):
         """初始化长方体粒子"""
-        particles = np.random.rand(self.n_particles, 3) + self.center
+        particles = np.random.rand(self.n_particles, 3)
+        particles = particles - np.mean(particles) + self.center
         particles[:, 0] *= self.length
         particles[:, 1] *= self.width
         particles[:, 2] *= self.height

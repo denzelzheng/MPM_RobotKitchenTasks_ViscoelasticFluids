@@ -19,6 +19,11 @@ learning_rate = 1e-19
 current_file_path = os.path.abspath(__file__)
 current_directory = os.path.dirname(current_file_path)
 
+container_length = 0.5 
+container_width = 0.5
+container_height = 0.3
+material_height = 0.1
+
 
 def main(align_method='kdtree'):
     print("Starting main function")
@@ -41,7 +46,8 @@ def main(align_method='kdtree'):
     n_tool_particles = tool_points.shape[0] if tool_points is not None else 0
 
     print(f"Initializing particle system with {n_particles} particles and {n_tool_particles} tool particles")
-    particle_system = ParticleSystem(n_particles, n_tool_particles, end_step)
+    particle_system = ParticleSystem(n_particles, n_tool_particles, end_step, container_length, container_width, container_height)
+
     
     print(f"Setting particle system with object particle models and mechanical data")
     particle_system.initialize_objects(initial_points, final_points, tool_points)

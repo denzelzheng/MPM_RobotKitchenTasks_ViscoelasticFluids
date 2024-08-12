@@ -174,24 +174,20 @@ def preprocess_point_clouds(initial_cloud_path, final_cloud_path, align_method='
         return initial_points, None
 
 def preprocess_mechanical_data(traj_path, force_path, max_steps):
-    # Load data
+
     tool_traj_sequence = np.load(traj_path)
     tool_force_sequence = np.load(force_path)
     
     print(f"Loaded trajectory data shape: {tool_traj_sequence.shape}, dtype: {tool_traj_sequence.dtype}")
     print(f"Loaded force data shape: {tool_force_sequence.shape}, dtype: {tool_force_sequence.dtype}")
-    
-    # Convert to float32 if needed
+
     if tool_traj_sequence.dtype != np.float32:
         tool_traj_sequence = tool_traj_sequence.astype(np.float32)
         print("Converted trajectory data to float32")
     if tool_force_sequence.dtype != np.float32:
         tool_force_sequence = tool_force_sequence.astype(np.float32)
         print("Converted force data to float32")
-    
-    # Ensure trajectory and force data have the same length
-    assert len(tool_traj_sequence) == len(tool_force_sequence), "Mismatch in trajectory and force data lengths"
-    
+
     original_steps = len(tool_traj_sequence)
     print(f"Original number of steps: {original_steps}")
     
@@ -199,24 +195,47 @@ def preprocess_mechanical_data(traj_path, force_path, max_steps):
         print("Data already matches required steps. No preprocessing needed.")
         return tool_traj_sequence, tool_force_sequence
     
-    # Create index arrays for original and target steps
+
     original_indices = np.arange(original_steps, dtype=np.float32)
     target_indices = np.linspace(0, original_steps - 1, max_steps, dtype=np.float32)
-    
-    # Interpolate or sample trajectory data
+
     traj_interpolator = interpolate.interp1d(original_indices, tool_traj_sequence, axis=0, kind='linear')
     new_tool_traj = traj_interpolator(target_indices).astype(np.float32)
+    print(f"Preprocessed trajectory data shape: {new_tool_traj.shape}, dtype: {new_tool_traj.dtype}")
     
-    # Interpolate or sample force data
+    if original_steps < max_steps:
+        print(f"Interpolated data from {original_steps} to {max_steps} steps")
+    else:
+        print(f"Sampled data from {original_steps} to {max_steps} steps")
+
+
+
+
+    original_steps = len(tool_force_sequence)
+    print(f"Original number of steps: {original_steps}")
+    
+    if original_steps == max_steps:
+        print("Data already matches required steps. No preprocessing needed.")
+        return tool_traj_sequence, tool_force_sequence
+    
+
+    original_indices = np.arange(original_steps, dtype=np.float32)
+    target_indices = np.linspace(0, original_steps - 1, max_steps, dtype=np.float32)
+
     force_interpolator = interpolate.interp1d(original_indices, tool_force_sequence, kind='linear')
     new_tool_force = force_interpolator(target_indices).astype(np.float32)
-    
-    print(f"Preprocessed trajectory data shape: {new_tool_traj.shape}, dtype: {new_tool_traj.dtype}")
     print(f"Preprocessed force data shape: {new_tool_force.shape}, dtype: {new_tool_force.dtype}")
     
     if original_steps < max_steps:
         print(f"Interpolated data from {original_steps} to {max_steps} steps")
     else:
         print(f"Sampled data from {original_steps} to {max_steps} steps")
+
+
+
+
+
+
+
     
     return new_tool_traj, new_tool_force

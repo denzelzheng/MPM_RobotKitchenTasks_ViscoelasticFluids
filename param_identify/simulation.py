@@ -21,7 +21,7 @@ class ParticleSystem:
         self.n_particles = n_particles
         self.n_tool_particles = n_tool_particles
         self.n_grid = 64
-        self.dt = 1e-4
+        self.dt = 5e-4
         self.dx, self.inv_dx = 1 / self.n_grid, float(self.n_grid)
         self.p_mass = total_mass / n_particles
         self.p_vol = (self.dx * 0.5)**2
@@ -411,14 +411,17 @@ class ParticleSystem:
             z_min = 0.5 - self.container_length / 2
             z_max = 0.5 + self.container_length / 2
 
+            y_min = 0.5 - self.container_height / 2
+            y_max = 0.5 + self.container_height / 2
+
             # Check if the point is inside the container (hole)
             in_container = (x_min <= x <= x_max and
                             z_min <= z <= z_max and
-                            y <= self.container_height + bound * self.dx)
+                            y_min <= y <= y_max )
 
             if in_container:
                 # Bottom of the container
-                if y < bound * self.dx:
+                if y < y_min and v_out[1] < 0:
                     # v_out[0] = 0
                     v_out[1] = 0
                     # v_out[2] = 0
@@ -452,7 +455,7 @@ class ParticleSystem:
                     # v_out[0] = 0
                     # v_out[1] = 0
                     v_out[2] = 0
-                if j < bound and v_out[1] < 0:
+                if y < y_min and v_out[1] < 0:
                     # v_out[0] = 0
                     v_out[1] = 0
                     # v_out[2] = 0
