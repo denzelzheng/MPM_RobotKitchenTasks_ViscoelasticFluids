@@ -82,7 +82,7 @@ else:
 
     # 平移点云使其中心在原点
     pcd.translate(-center)
-    pcd.translate(np.array([0.5, 0.5, 0.5]))
+    # pcd.translate(np.array([0.5, 0.5, 0.5]))
 
     # 最后一次重新计算边界框
     bbox = pcd.get_axis_aligned_bounding_box()

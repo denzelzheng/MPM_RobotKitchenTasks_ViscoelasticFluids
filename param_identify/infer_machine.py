@@ -15,7 +15,7 @@ yield_stress = 1e6
 visco = 0.1
 end_step = 2048
 
-num_iterations = 30
+num_iterations = 5
 learning_rate = 1e-19
 
 current_file_path = os.path.abspath(__file__)
@@ -44,7 +44,7 @@ class MainStateMachine:
         self.tool_force_path = os.path.join(current_directory, "tool_force.npy")
 
 
-        np.save(self.tool_traj_path, np.array([[0.5, 0.5, 0.5], [0.5, 0.4, 0.4]]))
+        np.save(self.tool_traj_path, np.array([[0.5, 0.65, 0.3], [0.3, 0.65, 0.6]]))
 
     def process_surface_data(self):
         print("Processing surface data...")
@@ -77,20 +77,24 @@ class MainStateMachine:
     def infer(self):
         print("Starting inference...")
 
+        # Process mechanical data
+        tool_traj_sequence, tool_force_sequence = preprocess_mechanical_data(self.tool_traj_path, self.tool_force_path, end_step)
+
+        print(tool_traj_sequence)
+
+       
         self.process_surface_data()
 
         # Process particle model point clouds
         initial_particles, final_particles = preprocess_point_clouds(self.initial_cloud_path, self.final_cloud_path, self.align_method)
         initial_particles = initial_particles + np.array([0.5, 0.5, 0.5])
         final_particles = final_particles + np.array([0.5, 0.5, 0.5])
-        tool_particles = preprocess_point_clouds(self.tool_cloud_path, None, self.align_method)[0] 
+        tool_particles = preprocess_point_clouds(self.tool_cloud_path, None, self.align_method)[0] + tool_traj_sequence[0]
 
         if initial_particles is None or final_particles is None:
             print("Error in preprocessing particle model point clouds. Exiting.")
             return
 
-        # Process mechanical data
-        tool_traj_sequence, tool_force_sequence = preprocess_mechanical_data(self.tool_traj_path, self.tool_force_path, end_step)
 
         if self.first_inference:
             n_particles = initial_particles.shape[0]

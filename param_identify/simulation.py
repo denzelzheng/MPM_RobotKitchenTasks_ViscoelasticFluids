@@ -411,8 +411,8 @@ class ParticleSystem:
             z_min = 0.5 - self.container_length / 2
             z_max = 0.5 + self.container_length / 2
 
-            y_min = 0.5 - self.container_height / 2
-            y_max = 0.5 + self.container_height / 2
+            y_min = 0.5
+            y_max = 0.5 + self.container_height
 
             # Check if the point is inside the container (hole)
             in_container = (x_min <= x <= x_max and
@@ -422,9 +422,9 @@ class ParticleSystem:
             if in_container:
                 # Bottom of the container
                 if y < y_min and v_out[1] < 0:
-                    # v_out[0] = 0
+                    v_out[0] = 0
                     v_out[1] = 0
-                    # v_out[2] = 0
+                    v_out[2] = 0
 
                 # x direction (width)
                 if x < x_min and v_out[0] < 0:
@@ -441,28 +441,28 @@ class ParticleSystem:
             else:
                 if i < bound and v_out[0] < 0:
                     v_out[0] = 0
-                    # v_out[1] = 0
-                    # v_out[2] = 0
+                    v_out[1] = 0
+                    v_out[2] = 0
                 if i > self.n_grid - bound and v_out[0] > 0:
                     v_out[0] = 0
-                    # v_out[1] = 0
-                    # v_out[2] = 0
+                    v_out[1] = 0
+                    v_out[2] = 0
                 if k < bound and v_out[2] < 0:
-                    # v_out[0] = 0
-                    # v_out[1] = 0
+                    v_out[0] = 0
+                    v_out[1] = 0
                     v_out[2] = 0
                 if k > self.n_grid - bound and v_out[2] > 0:
-                    # v_out[0] = 0
-                    # v_out[1] = 0
+                    v_out[0] = 0
+                    v_out[1] = 0
                     v_out[2] = 0
                 if y < y_min and v_out[1] < 0:
-                    # v_out[0] = 0
+                    v_out[0] = 0
                     v_out[1] = 0
-                    # v_out[2] = 0
+                    v_out[2] = 0
                 if j > self.n_grid - bound and v_out[1] > 0:
-                    # v_out[0] = 0
+                    v_out[0] = 0
                     v_out[1] = 0
-                    # v_out[2] = 0
+                    v_out[2] = 0
 
             self.grid_v_out[i, j, k] = v_out
 

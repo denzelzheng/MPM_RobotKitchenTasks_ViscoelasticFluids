@@ -98,7 +98,7 @@ def visualize_3d_point_clouds(arr1, arr2, target_arr, first_frame_only=False, ta
             vis.update_renderer()
 
             # 控制帧率
-            time.sleep(0.1)  
+            time.sleep(0.01)  
 
         vis.run()
         # 关闭可视化窗口
