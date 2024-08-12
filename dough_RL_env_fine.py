@@ -4,7 +4,7 @@ from config import mano_urdf_path, points_data_path
 import numpy as np
 import trimesh
 from os.path import join as pjoin
-from sim_w_mix_and_hydration_RL import StaticBoundary, DynamicBoundary, RigidBody, SoftBody, MpmSim
+from sim_w_mix_and_hydration_RL_rgba import *
 from icecream import ic
 from models import ManoHand, ManoHandSensors
 import json
@@ -12,8 +12,12 @@ from vedo import show
 from scipy.spatial.transform import Rotation as R
 from utils import trimesh_show, fix_unity_urdf_tf, read_tet, \
     interpolate_from_mesh, rotate_mesh
-from sim_w_mix_and_hydration_RL import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain, \
+from sim_w_mix_and_hydration_RL_rgba import NeoHookean, StVK_with_Hecky_strain, visco_StVK_with_Hecky_strain, \
     cross_visco_StVK_with_Hecky_strain, NeoHookean_VonMise, hydration_material
+
+
+current_file_path = os.path.abspath(__file__)
+current_directory = os.path.dirname(current_file_path)
 
 
 
@@ -28,21 +32,21 @@ def thicken_mesh(mesh, thickness):
 def test_sim():
     ti.init(arch=ti.cuda)
     dt = 1e-4
-    n_grids = 128
-
+    n_grids = 138
     substeps = 5
 
     scale = 1.05
-
-    stir_folder = './data/stir/'
-    cut_folder = './data/cut/cut0001/'
+    current_file_path = os.path.abspath(__file__)
+    current_directory = os.path.dirname(current_file_path)  
+    stir_folder = current_directory + '/data/stir/'
+    cut_folder = current_directory + '/data/cut/cut0001/'
     # flour_material = NeoHookean_VonMise(15, 0.01, 0.45, False)
     # dough_material = visco_StVK_with_Hecky_strain(15, 0.01, 0.7, False)
 
-    dough_material = hydration_material(1500, 0.01, 0.15, 6800, 2.5, False)
-    flour_par = np.random.rand(15000, 3) * 0.13 * np.array([1.1, 0.37, 0.5]) * scale
+    dough_material = hydration_material(1300, 0.01, 0.15, 6300, 1.5, False)
+    flour_par = np.random.rand(65000, 3) * 0.13 * np.array([1.1, 0.38, 0.5]) * scale
     flour_par = flour_par - flour_par.mean(axis=0) + np.array([0.5, 0.47, 0.5])
-    flour_color = np.array([0.6, 0.6, 0.7])
+    flour_color = np.array([0.8, 0.8, 0.8, 1.0])
     flour = SoftBody(
         flour_par, dough_material, flour_color, 1.0, 0.0, 0.9)
     
@@ -66,10 +70,10 @@ def test_sim():
     basin_mesh_lag.vertices += np.array([0.5, 0.45, 0.5]) 
 
     water_material = NeoHookean(5e-6, 0.45, True)
-    water_par = np.random.rand(10000, 3) * 0.045 * np.array([1.6, 0.25, 1.3])
+    water_par = np.random.rand(30000, 3) * 0.045 * np.array([1.6, 0.25, 1.3])
     water_par = water_par - water_par.mean(axis=0)  * scale
     water_par += np.array([0.5, 0.58, 0.5])
-    water_color = np.array([0.45, 0.45, 0.7])
+    water_color = np.array([0.45, 0.45, 0.7, 0.1])
     water = SoftBody(
         water_par, water_material, water_color, 0.0, 1.0, 0.9)
 
@@ -126,11 +130,15 @@ def test_sim():
 
     valve = 0.573
     
+
+    x_time_series = []
+    x_color_time_series = []
+    shovel_time_series = []
     while not sim.window.is_pressed(ti.GUI.ESCAPE):
         
         sim.set_valve(valve)
         # print("valve", valve)
-        for i in range(1000):
+        for i in range(700):
             for s in range(substeps):
 
                 
@@ -196,13 +204,23 @@ def test_sim():
                             obj1_left = True
 
 
-    
-                shovel.set_target(np.array([obj1_x, obj1_y, obj1_z]), np.array([1, 0, 0, 0]), shovel_pos)
+                delta_shovel_pos = np.array([obj1_x, obj1_y, obj1_z])
+                shovel.set_target(delta_shovel_pos, np.array([1, 0, 0, 0]), shovel_pos)
                 sim.substep()
                 sim.toward_target(substeps=1)
             sim.update_scene()
+            if frame % 60 == 0:
+                x_time_series.append(sim.np_x)
+                x_color_time_series.append(sim.np_x_color)
+                shovel_time_series.append(delta_shovel_pos + shovel_pos)
+                print(frame)
             sim.show()
             frame += 1
+            if frame % 600 == 0:
+                np.save(current_directory+"/../RobotKitchenTasks_output/shovel_position_time_series.npy", np.array(shovel_time_series))
+                np.save(current_directory+"/../RobotKitchenTasks_output/position_time_series.npy", np.array(x_time_series))
+                np.save(current_directory+"/../RobotKitchenTasks_output/color_time_series.npy", np.array(x_color_time_series))
+
         if valve <= 0.62:
             valve += 0.0015
 

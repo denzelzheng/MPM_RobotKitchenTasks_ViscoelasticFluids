@@ -23,7 +23,6 @@ def compute_P_hat(sig, mu, lam):
     return P_hat
 
 
-
 @ti.func
 def compute_hydrationsion_viscosity(viscosity, hydration, phi_w=0.5, phi_m=0.64, viscosity_intrinsic=2.5, lambda_decay=2):
 
@@ -559,7 +558,7 @@ class MpmSim:
         # TODO:  HARD CODE
         self.bounds_par_mass = self.rp_mass * 1e-3
 
-        self.coloring_hydra_alpha = 0.7
+        self.coloring_hydra_alpha = 0.8
 
         self.coloring_mixing_alpha = 7.0
         self.p_c_L1_distanchydrating_efficacyriterion = 0.2  # assess phases mixing uniformity
@@ -690,7 +689,7 @@ class MpmSim:
             self.n_phases = len(self.deformable_bodies)
             self.x = vecs(3, T, self.n_soft_pars)
             self.hydration = scalars(T, self.n_soft_pars)
-            self.x_color = vecs(3, T, self.n_soft_pars)
+            self.x_color = vecs(4, T, self.n_soft_pars)
             self.p_c = vecs(self.n_phases, T, self.n_soft_pars)
             self.hydra_p_c = vecs(self.n_phases, T, self.n_soft_pars)
             
@@ -734,7 +733,7 @@ class MpmSim:
             self.x_color.from_numpy(np.array(np_colors))
 
         self.grid_v = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
-        self.grid_c = vecs(3, T, (self.n_grids, self.n_grids, self.n_grids))
+        self.grid_c = vecs(4, T, (self.n_grids, self.n_grids, self.n_grids))
         self.grid_m = scalars(T, (self.n_grids, self.n_grids, self.n_grids))
         self.grid_p_c = vecs(n=self.n_phases, dtype=T, shape=(self.n_grids, self.n_grids, self.n_grids))
         self.grid_hydra_p_c = vecs(n=self.n_phases, dtype=T, shape=(self.n_grids, self.n_grids, self.n_grids))
@@ -861,7 +860,7 @@ class MpmSim:
     def init_step(self):
         for i, j, k in self.grid_m:
             self.grid_v[i, j, k] = [0, 0, 0]
-            self.grid_c[i, j, k] = [0, 0, 0]
+            self.grid_c[i, j, k] = [0, 0, 0, 0]
             self.grid_m[i, j, k] = 0
             for l in ti.static(range(self.n_phases)):
                 self.grid_p_c[i, j, k][l] = 0
@@ -900,7 +899,8 @@ class MpmSim:
 
                 tmp_radius = 0.002
                 self.body_x[body_id].from_numpy(self.np_x[mask])
-                self.body_x_color[body_id].from_numpy(self.np_x_color[mask])
+                # print(self.np_x_color[mask].shape)
+                self.body_x_color[body_id].from_numpy(self.np_x_color[mask][:, :3])
                 self.scene.particles(self.body_x[body_id], per_vertex_color=self.body_x_color[body_id], radius=tmp_radius)
 
 
@@ -1089,7 +1089,7 @@ class MpmSim:
                 new_C = ti.Matrix.zero(float, 3, 3)
                 new_p_c = ti.Vector.zero(float, self.n_phases)
                 new_h_p_c = ti.Vector.zero(float, self.n_phases)
-                new_c = ti.Vector.zero(float, 3)
+                new_c = ti.Vector.zero(float, 4)
                 for i, j, k in ti.static(ti.ndrange(3, 3, 3)):
                     # loop over 3x3 grid node neighborhood
                     dpos = ti.Vector([i, j, k]).cast(float) - fx
@@ -1194,7 +1194,7 @@ class MpmSim:
                     
                     
 
-                hydration_color = ti.Vector([0.55, 0.55, 0.35]) 
+                hydration_color = ti.Vector([0.65, 0.65, 0.45, 1.0]) 
                 prev_hydration = self.hydration[p]
 
                 if (hydra_concentration >= self.critical_concentration) and water_absorb > 1e-5:
