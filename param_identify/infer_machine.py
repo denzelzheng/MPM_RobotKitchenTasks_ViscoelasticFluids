@@ -5,6 +5,7 @@ from data_utils import preprocess_point_clouds, preprocess_mechanical_data
 from visualize import visualize_3d_point_clouds
 from simulation import ParticleSystem
 from adaptive_particle_model import AdaptiveParticleModel, SurfaceToParticleModel
+from preprocess_serial import calculate_external_force
 import open3d as o3d
 
 VISUALIZE_MODE = 1
@@ -42,11 +43,16 @@ class MainStateMachine:
         self.tool_cloud_path = os.path.join(current_directory, "tool_cloud.ply")
         self.tool_traj_path = os.path.join(current_directory, "tool_traj.npy")
         self.tool_force_path = os.path.join(current_directory, "tool_force.npy")
+        
 
 
         np.save(self.tool_traj_path, np.array([[0.5, 0.7, 0.4], [0.5, 0.7, 0.6]]))
+
+
         np.save(self.tool_force_path, np.array([0.05, 0.1, 0.05]))
 
+        # self.tool_force_serials_path = os.path.join(current_directory, "tool_force.txt")
+        # np.save(self.tool_force_path, calculate_external_force(self.tool_force_serials_path))
 
     def process_surface_data(self):
         print("Processing surface data...")
