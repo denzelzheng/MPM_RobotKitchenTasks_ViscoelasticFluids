@@ -51,8 +51,10 @@ class MainStateMachine:
 
         np.save(self.tool_force_path, np.array([0.05, 0.1, 0.05]))
 
-        # self.tool_force_serials_path = os.path.join(current_directory, "tool_force.txt")
-        # np.save(self.tool_force_path, calculate_external_force(self.tool_force_serials_path))
+        self.tool_force_serials_path = os.path.join(current_directory, "tool_force.txt")
+        tool_force_array = calculate_external_force(self.tool_force_serials_path)[1]
+        print(tool_force_array)
+        np.save(self.tool_force_path, tool_force_array)
 
     def process_surface_data(self):
         print("Processing surface data...")
