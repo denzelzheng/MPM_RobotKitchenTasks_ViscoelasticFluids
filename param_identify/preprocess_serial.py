@@ -1,21 +1,3 @@
-# import serial
-# import re
-
-# ser = serial.Serial('/dev/ttyACM0', 9600)
-
-# with open('sensor_data.txt', 'w') as file:
-#     try:
-#         while True:
-#             if ser.in_waiting > 0:
-#                 line = ser.readline().decode('ascii', errors='ignore').strip()
-#                 file.write(line + '\n')
-#                 file.flush()  # 确保数据立即写入文件
-#     except KeyboardInterrupt:
-#         print("数据记录已停止")
-#     finally:
-#         ser.close()
-
-
 import numpy as np
 import re
 from scipy.signal import savgol_filter
@@ -34,17 +16,41 @@ def read_sensor_data(file_path):
                 sensor1 = float(match.group(2))
                 
                 # Apply scaling
-                scaled_sensor0 = (sensor0 + 1500) * (1 / 5) - 300
-                scaled_sensor1 = (sensor1 + 1500) * (1 / 5) - 300
+                scaled_sensor0 = (sensor0 + 317) * (1 / 7.5) 
+                scaled_sensor1 = (sensor1 + 323) * (1 / 7.3)
+                scaled_sensor0 *= 0.00981
+                scaled_sensor1 *= 0.00981
                 
                 sensor0_data.append(scaled_sensor0)
                 sensor1_data.append(scaled_sensor1)
     
-    return np.array(sensor0_data), np.array(sensor1_data)
+    # Ensure both arrays have the same length
+    min_length = min(len(sensor0_data), len(sensor1_data))
+    return np.array(sensor0_data[:min_length]), np.array(sensor1_data[:min_length])
+
+def remove_outliers(data, threshold=3):
+    mean = np.mean(data)
+    std = np.std(data)
+    z_scores = np.abs((data - mean) / std)
+    return data[z_scores < threshold]
 
 def calculate_external_force(file_path, window_size=5, polyorder=3, force_threshold=0.001):
     # Read sensor data
     sensor0_array, sensor1_array = read_sensor_data(file_path)
+    
+    # Ensure arrays have the same length
+    min_length = min(len(sensor0_array), len(sensor1_array))
+    sensor0_array = sensor0_array[:min_length]
+    sensor1_array = sensor1_array[:min_length]
+    
+    # Remove outliers
+    sensor0_array = remove_outliers(sensor0_array)
+    sensor1_array = remove_outliers(sensor1_array)
+    
+    # Ensure arrays still have the same length after outlier removal
+    min_length = min(len(sensor0_array), len(sensor1_array))
+    sensor0_array = sensor0_array[:min_length]
+    sensor1_array = sensor1_array[:min_length]
     
     # Calculate total gripping force
     total_force = sensor0_array + sensor1_array
@@ -68,10 +74,6 @@ def calculate_external_force(file_path, window_size=5, polyorder=3, force_thresh
         external_force_events.append((i, event, force_change[i]))
     
     return smoothed_force, force_change, external_force_events
-
-
-
-
 
 def analyze_force_data(file_path):
     # Call the function
