@@ -16,8 +16,8 @@ def read_sensor_data(file_path):
                 sensor1 = float(match.group(2))
                 
                 # Apply scaling
-                scaled_sensor0 = (sensor0 + 317) * (1 / 7.5) 
-                scaled_sensor1 = (sensor1 + 323) * (1 / 7.3)
+                scaled_sensor0 = (sensor0 + 317) * (1 / 9.5) 
+                scaled_sensor1 = (sensor1 + 323) * (1 / 9.3)
                 scaled_sensor0 *= 0.00981
                 scaled_sensor1 *= 0.00981
                 

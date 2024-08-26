@@ -8,13 +8,16 @@ from adaptive_particle_model import AdaptiveParticleModel, SurfaceToParticleMode
 from preprocess_serial import calculate_external_force
 import open3d as o3d
 
-VISUALIZE_MODE = 1
+VISUALIZE_MODE = 0
 
-E = 1e3
+E = 5e4
 nu = 0.4
-yield_stress = 100
-visco = 1e-0
+yield_stress = 1e5
+visco = 5e4
 end_step = 2048
+
+visco_lower_bound = 1e4
+visco_upper_bound = 1e6
 
 num_iterations = 10
 learning_rate = 1e-3
@@ -53,6 +56,7 @@ class MainStateMachine:
 
         self.tool_force_serials_path = os.path.join(current_directory, "tool_force.txt")
         tool_force_array = calculate_external_force(self.tool_force_serials_path)[1]
+        tool_force_array = np.clip(tool_force_array, a_min=-1.0, a_max=1.0)
         print(tool_force_array)
         np.save(self.tool_force_path, tool_force_array)
 
@@ -90,6 +94,7 @@ class MainStateMachine:
         print("Surface data processed and saved.")
 
     def infer(self):
+        best_viscosity = 0.0
         print("Starting inference...")
 
         # Process mechanical data
@@ -114,16 +119,20 @@ class MainStateMachine:
             print(f"Initializing particle system with {n_particles} particles and {n_tool_particles} tool particles")
             self.particle_system = ParticleSystem(n_particles, n_tool_particles, end_step, container_length, container_width, container_height)
             self.first_inference = False
+            best_viscosity = visco
+            self.particle_system.set_constitutive_parameters_bound(visco_lower_bound, visco_upper_bound)
+
 
         print(f"Setting particle system with object particle models and mechanical data")
         self.particle_system.initialize_objects(initial_particles, final_particles, tool_particles)
         self.particle_system.set_mechanical_motion(tool_traj_sequence, tool_force_sequence)
-        self.particle_system.set_constitutive_parameters(E, nu, yield_stress, visco)
+        self.particle_system.set_constitutive_parameters(E, nu, yield_stress, best_viscosity)
         print("Particle system initialized")
 
         # Run optimization
         best_viscosity, final_loss = self.particle_system.optimize_viscosity(num_iterations, end_step, optimizer_type='eebo', learning_rate=learning_rate, momentum=0.9)
         particles_np, tool_particles_np = self.particle_system.export_deformation()
+        self.particle_system.set_constitutive_parameters_bound(visco_lower_bound, best_viscosity + 10)
 
         if VISUALIZE_MODE:
             input("Press any key to continue...")

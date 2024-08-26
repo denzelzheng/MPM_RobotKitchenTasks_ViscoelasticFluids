@@ -7,10 +7,8 @@ ti.init(arch=ti.cuda, device_memory_GB=8)
 
 total_mass = 1
 tool_total_mass = 0.1
-density = 500
+density = 1000
 
-visco_lower_bound = 1e-1
-visco_upper_bound = 1e6
 
 gravity = 9.81
 dim = 3
@@ -21,7 +19,7 @@ class ParticleSystem:
     def __init__(self, n_particles, n_tool_particles, max_steps, container_length, container_width, container_height):
         self.n_particles = n_particles
         self.n_tool_particles = n_tool_particles
-        self.n_grid = 64
+        self.n_grid = 50
         self.dt = 5e-4
         self.dx, self.inv_dx = 1 / self.n_grid, float(self.n_grid)
         self.p_mass = total_mass / n_particles
@@ -29,9 +27,6 @@ class ParticleSystem:
         self.p_vol = self.p_mass / density
         self.tool_p_mass = tool_total_mass / n_tool_particles
         self.max_steps = max_steps
-
-        self.visco_lower_bound = visco_lower_bound
-        self.visco_upper_bound = visco_upper_bound
 
 
         self.container_width = container_width
@@ -89,6 +84,9 @@ class ParticleSystem:
         self.viscosity = ti.field(dtype=ti.f32, shape=())
         self.loss = ti.field(dtype=ti.f32, shape=())
 
+        self.visco_lower_bound = ti.field(dtype=ti.f32, shape=())
+        self.visco_upper_bound = ti.field(dtype=ti.f32, shape=())
+
         ti.root.lazy_grad()
 
     def initialize_objects(self, initial_positions, final_positions, initial_tool_positions):
@@ -105,6 +103,13 @@ class ParticleSystem:
         self.nu[None] = nu
         self.yield_stress[None] = yield_stress
         self.viscosity[None] = viscosity
+
+
+    def set_constitutive_parameters_bound(self, visco_lower_bound, visco_upper_bound):
+        self.visco_lower_bound[None] = visco_lower_bound
+        self.visco_upper_bound[None] = visco_upper_bound
+        print(f"Visco lower bound: {self.visco_lower_bound[None]}")
+        print(f"Visco_upper bound: {self.visco_upper_bound[None]}")
 
     def export_deformation(self):
         self.particles_np = self.x.to_numpy()
@@ -548,8 +553,8 @@ class ParticleSystem:
     #     elif optimizer_type == 'sgd':
     #         self.sgd_momentum = ti.field(ti.f32, shape=())
     #         self.sgd_momentum[None] = 0
-    #     self.visco_lower_bound = visco_lower_bound
-    #     self.visco_upper_bound = visco_upper_bound
+    #     self.visco_lower_bound[None] = visco_lower_bound
+    #     self.visco_upper_bound[None] = visco_upper_bound
 
     # @ti.func
     # def adam_update(self, t, g, m, v, alpha, beta1, beta2, eps):
@@ -565,13 +570,13 @@ class ParticleSystem:
     #     g = self.viscosity.grad[None]
     #     update, self.adam_m[None], self.adam_v[None] = self.adam_update(t, g, self.adam_m[None], self.adam_v[None], alpha, beta1, beta2, eps)
     #     self.viscosity[None] -= update
-    #     self.viscosity[None] = ti.max(self.visco_lower_bound, ti.min(self.viscosity[None], self.visco_upper_bound))
+    #     self.viscosity[None] = ti.max(self.visco_lower_bound[None], ti.min(self.viscosity[None], self.visco_upper_bound[None]))
 
     # @ti.kernel
     # def sgd_step(self, learning_rate: ti.f32, momentum: ti.f32):
     #     self.sgd_momentum[None] = momentum * self.sgd_momentum[None] + learning_rate * self.viscosity.grad[None]
     #     self.viscosity[None] -= self.sgd_momentum[None]
-    #     self.viscosity[None] = ti.max(self.visco_lower_bound, ti.min(self.viscosity[None], self.visco_upper_bound))
+    #     self.viscosity[None] = ti.max(self.visco_lower_bound[None], ti.min(self.viscosity[None], self.visco_upper_bound[None]))
     
     
     # def optimize_viscosity(self, num_iterations, end_step, optimizer_type='adam', **kwargs):
@@ -652,13 +657,13 @@ class ParticleSystem:
         g = self.viscosity.grad[None]
         update, self.adam_m[None], self.adam_v[None] = self.adam_update(t, g, self.adam_m[None], self.adam_v[None], alpha, beta1, beta2, eps)
         self.viscosity[None] -= update
-        self.viscosity[None] = ti.max(self.visco_lower_bound, ti.min(self.viscosity[None], self.visco_upper_bound))
+        self.viscosity[None] = ti.max(self.visco_lower_bound[None], ti.min(self.viscosity[None], self.visco_upper_bound[None]))
 
     @ti.kernel
     def sgd_step(self, learning_rate: ti.f32, momentum: ti.f32):
         self.sgd_momentum[None] = momentum * self.sgd_momentum[None] + learning_rate * self.viscosity.grad[None]
         self.viscosity[None] -= self.sgd_momentum[None]
-        self.viscosity[None] = ti.max(self.visco_lower_bound, ti.min(self.viscosity[None], self.visco_upper_bound))
+        self.viscosity[None] = ti.max(self.visco_lower_bound[None], ti.min(self.viscosity[None], self.visco_upper_bound[None]))
 
     @ti.func
     def sample_log_uniform(self, lower, upper):
@@ -670,17 +675,20 @@ class ParticleSystem:
     def eebo_step(self, decay_rate: ti.f32):
         if ti.random(ti.f32) < self.eebo_exploration_rate[None]:
             # Explore: sample a new value from the entire range
-            self.viscosity[None] = self.sample_log_uniform(self.visco_lower_bound, self.visco_upper_bound)
+            self.viscosity[None] = self.sample_log_uniform(self.visco_lower_bound[None], self.visco_upper_bound[None])
         else:
             # Exploit: sample a new value near the best known value
             log_best = ti.log(self.eebo_best_value[None])
-            log_range = ti.log(self.visco_upper_bound / self.visco_lower_bound)
+            log_range = ti.log(self.visco_upper_bound[None] / self.visco_lower_bound[None])
             local_lower = ti.exp(log_best - 0.1 * log_range)
             local_upper = ti.exp(log_best + 0.1 * log_range)
             self.viscosity[None] = self.sample_log_uniform(
-                ti.max(local_lower, self.visco_lower_bound),
-                ti.min(local_upper, self.visco_upper_bound)
+                ti.max(local_lower, self.visco_lower_bound[None]),
+                ti.min(local_upper, self.visco_upper_bound[None])
             )
+
+        self.viscosity[None] = ti.max(self.visco_lower_bound[None], ti.min(self.viscosity[None], self.visco_upper_bound[None]))
+
         # Decay exploration rate
         self.eebo_exploration_rate[None] *= decay_rate
 
