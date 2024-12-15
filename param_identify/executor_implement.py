@@ -76,6 +76,7 @@ class ExecutorServer:
         """Process the policy (simulated with sleep)"""
         print(f"Processing policy: {policy}")
         time.sleep(self.process_time)
+        time.sleep(1000)
         print("Policy execution completed")
 
     def run(self):

@@ -52,7 +52,7 @@ def test_policy_learning():
     num_episodes = 100
     steps_per_episode = 3
     batch_size = 8
-    target_viscosity = 1.0  # 目标粘度值
+    target_viscosity = 1e5
 
     for episode in range(num_episodes):
         dummy_images = [np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8) 
