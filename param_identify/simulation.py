@@ -5,8 +5,7 @@ import math
 
 ti.init(arch=ti.cuda, device_memory_GB=8)
 
-total_mass = 1
-tool_total_mass = 0.1
+
 density = 1000
 
 
@@ -16,17 +15,20 @@ bound = 3
 
 @ti.data_oriented
 class ParticleSystem:
-    def __init__(self, n_particles, n_tool_particles, max_steps, container_length, container_width, container_height):
+    def __init__(self, n_particles, n_tool_particles, max_steps, container_length, container_width, container_height, total_mass=1.0, tool_total_mass=0.1):
         self.n_particles = n_particles
         self.n_tool_particles = n_tool_particles
         self.n_grid = 50
         self.dt = 5e-4
         self.dx, self.inv_dx = 1 / self.n_grid, float(self.n_grid)
-        self.p_mass = total_mass / n_particles
+        self.total_mass = total_mass
+        self.tool_total_mass = tool_total_mass
+        self.p_mass = self.total_mass / n_particles
         self.p_vol = (self.dx * 0.5)**2
         self.p_vol = self.p_mass / density
-        self.tool_p_mass = tool_total_mass / n_tool_particles
+        self.tool_p_mass = self.tool_total_mass / n_tool_particles
         self.max_steps = max_steps
+        self.n_particles = n_particles
 
 
         self.container_width = container_width
@@ -104,6 +106,9 @@ class ParticleSystem:
         self.yield_stress[None] = yield_stress
         self.viscosity[None] = viscosity
 
+    def set_mass(self, mass):
+        self.total_mass = mass
+        self.p_mass = self.total_mass / self.n_particles
 
     def set_constitutive_parameters_bound(self, visco_lower_bound, visco_upper_bound):
         self.visco_lower_bound[None] = visco_lower_bound
@@ -741,6 +746,7 @@ class ParticleSystem:
 
         # Set the viscosity to the best found value
         self.viscosity[None] = best_viscosity
+
 
         # Run the simulation again with the best viscosity
         final_loss = self.run_simulation(end_step)

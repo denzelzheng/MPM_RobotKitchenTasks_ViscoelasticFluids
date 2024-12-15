@@ -144,13 +144,13 @@ def main(align_method='kdtree'):
     while True:
         state_machine.infer()
 
-        command = input("Enter command (infer/quit): ").lower()
-        if command == "quit":
-            break
-        elif command == "infer":
-            state_machine.infer()
-        else:
-            print(f"Unknown command: {command}")
+        # command = input("Enter command (infer/quit): ").lower()
+        # if command == "quit":
+        #     break
+        # elif command == "infer":
+        #     state_machine.infer()
+        # else:
+        #     print(f"Unknown command: {command}")
 
 if __name__ == "__main__":
     import sys
